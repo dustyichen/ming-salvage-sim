@@ -26,6 +26,12 @@ from ming_sim.models import Event, GameState
 
 _content: Optional[GameContent] = None
 
+# 给建筑/地区落库做 event 关联用的占位事件（issue 结案触发的副作用无真实 event）。
+_ISSUE_PSEUDO_EVENT = Event(
+    id="issue_resolution", title="局势结案", kind="月末", summary="",
+    urgency=0, severity=0, credibility=100, interests=[], audiences=[],
+)
+
 
 def bind_content(content: GameContent) -> None:
     global _content
@@ -36,6 +42,64 @@ def _ctx() -> GameContent:
     if _content is None:
         raise RuntimeError("issues.bind_content() 未调用：GameContent 未注入。")
     return _content
+
+
+def _apply_issue_buildings(
+    db: GameDB,
+    state: GameState,
+    ops: object,
+    pseudo_event: Event,
+    reason: str,
+) -> List[Dict[str, object]]:
+    """落地 issue effect 里的 buildings 段：建筑随局势结案而新建/改数值/废止。
+
+    每项 op 一个 dict，`action` ∈ create/modify/remove：
+      - create：`region_id`/`name`/`category` 必填，其余可选（level/condition/maintenance/risk/output_metric/output_amount/status）
+      - modify：`building_id` 必填 + 增量字段（走 apply_building_deltas）
+      - remove：`building_id` 必填
+    建筑的新建/变更唯一入口——不存在顶层 building_delta/new_buildings。
+    """
+    applied: List[Dict[str, object]] = []
+    if not isinstance(ops, list):
+        return applied
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        action = str(op.get("action") or "").lower()
+        try:
+            if action == "create":
+                bid = db.add_building(
+                    state,
+                    region_id=str(op.get("region_id") or ""),
+                    name=str(op.get("name") or ""),
+                    category=str(op.get("category") or ""),
+                    level=int(op.get("level", 1)),
+                    condition=int(op.get("condition", 60)),
+                    maintenance=int(op.get("maintenance", 0)),
+                    risk=int(op.get("risk", 30)),
+                    output_metric=str(op.get("output_metric") or ""),
+                    output_amount=int(op.get("output_amount", 0)),
+                    status=str(op.get("status") or ""),
+                    origin="issue",
+                )
+                applied.append({"action": "create", "building_id": bid,
+                                 "name": str(op.get("name") or "")})
+            elif action == "modify":
+                bid = str(op.get("building_id") or "")
+                fields = {k: v for k, v in op.items()
+                          if k not in ("action", "building_id")}
+                fields.setdefault("reason", reason)
+                ch = db.apply_building_deltas(state, pseudo_event, None, "档房", {bid: fields})
+                applied.append({"action": "modify", "building_id": bid, "changes": ch})
+            elif action == "remove":
+                bid = str(op.get("building_id") or "")
+                ok = db.remove_building(state, bid, reason=reason)
+                applied.append({"action": "remove", "building_id": bid, "removed": ok})
+            else:
+                print(f"[WARN] issue effect buildings: action 非法 '{action}'，跳过。")
+        except Exception as exc:
+            print(f"[WARN] issue effect buildings 落库失败：{exc}；op={op}")
+    return applied
 
 
 def issue_to_payload(row: sqlite3.Row, recent_advances: List[sqlite3.Row]) -> Dict[str, object]:
@@ -88,6 +152,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
       - 'region.<id>.<field>'                   → regions 表
       - 'region.<id1>|<id2>|.<field>.<agg>'     → 多省聚合 (max/min/avg/sum)
       - 'army.<id>.<field>' / 多军 + agg
+      - 'building.<id>.<field>' / 多建筑 + agg
       - 'external.<id>.<field>' / 多 + agg
       - 'class.<name>.<field>'                  → classes 表全国汇总 (region_id='')
       - 'class.<name>@<region>.<field>'         → classes 表省级
@@ -100,7 +165,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
         return None
     parts = key.split(".")
     table = parts[0]
-    if table not in ("region", "army", "external", "class"):
+    if table not in ("region", "army", "building", "external", "class"):
         return None
     # 末段可能是 agg，先抽出
     agg = None
@@ -128,6 +193,8 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
             row = db.conn.execute(f"SELECT {field} FROM regions WHERE id = ?", (cid,)).fetchone()
         elif table == "army":
             row = db.conn.execute(f"SELECT {field} FROM armies WHERE id = ?", (cid,)).fetchone()
+        elif table == "building":
+            row = db.conn.execute(f"SELECT {field} FROM buildings WHERE id = ?", (cid,)).fetchone()
         elif table == "external":
             row = db.conn.execute(f"SELECT {field} FROM external_powers WHERE id = ?", (cid,)).fetchone()
         elif table == "class":
@@ -504,11 +571,16 @@ def apply_issue_tracker_output(
         _apply_metric_dict(state, effect.get("metrics") or {})
         _apply_economy_list(db, state, effect.get("economy") or [])
         _apply_faction_dict(db, effect.get("factions") or {})
+        building_ops = _apply_issue_buildings(
+            db, state, effect.get("buildings"),
+            _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
+        )
         applied_closes.append({
             "issue_id": issue_id,
             "title": new_row["title"],
             "reason": reason,
             "narrative": narrative,
+            "building_ops": building_ops,
         })
 
     # 4) cancels
@@ -597,6 +669,9 @@ def apply_score_extraction(
             army_changes = db.apply_army_deltas(state, pseudo_event, None, "档房", army_deltas_raw)
         except Exception as exc:
             print(f"[WARN] army_delta 落库失败：{exc}")
+
+    # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
+    #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
 
     # 5) external_power_updates：后金/蒙古/朝鲜/流寇等外部势力落库
     external_updates_raw = extracted.get("external_power_updates") or {}

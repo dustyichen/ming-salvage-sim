@@ -76,6 +76,21 @@ type ExternalPower = {
   last_action: string;
 };
 
+type Building = {
+  id: string;
+  region_id: string;
+  name: string;
+  category: string;
+  level: number;
+  condition: number;
+  maintenance: number;
+  risk: number;
+  output_metric: string;
+  output_amount: number;
+  status: string;
+  origin: string;
+};
+
 type MapNode = {
   id: string;
   kind: "region" | "theater" | "external";
@@ -85,6 +100,7 @@ type MapNode = {
   risk: number;
   region?: Region;
   armies: Army[];
+  buildings?: Building[];
 };
 
 type Minister = {
@@ -2613,6 +2629,30 @@ function NodeIntel({ node }: { node: MapNode }) {
           </tbody>
         </table>
       ) : <div className="empty-note">本地未记录常驻军。</div>}
+      {region ? (
+        <>
+          <div className="garrison-title">建筑</div>
+          {node.buildings && node.buildings.length ? (
+            <table className="intel-table">
+              <thead>
+                <tr><th>名称</th><th>类别</th><th>等级</th><th>完好</th><th>维护</th><th>产出</th></tr>
+              </thead>
+              <tbody>
+                {node.buildings.map((b) => (
+                  <tr key={b.id}>
+                    <td>{b.name}</td>
+                    <td>{b.category}</td>
+                    <td>{b.level}</td>
+                    <td>{b.condition}</td>
+                    <td>{b.maintenance}万/月</td>
+                    <td>{b.output_metric ? `${b.output_metric}+${b.output_amount}` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : <div className="empty-note">本地未记录建筑。</div>}
+        </>
+      ) : null}
     </>
   );
 }

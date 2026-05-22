@@ -76,6 +76,17 @@ def build_minister_tools(character: Character, context: CourtContext):
         """查看后金、蒙古、朝鲜、流寇等外部势力状态。"""
         return context.db.external_power_report()
 
+    def list_buildings() -> str:
+        """查看全国在册建筑（火炮厂、矿厂、常平仓、边堡、织造局等）的等级、完好、维护费与产出。"""
+        return context.db.buildings_report()
+
+    def inspect_building(building_name: str) -> str:
+        """查看某座建筑的类别、等级、完好、维护费、风险与产出。"""
+        try:
+            return context.db.building_detail(building_name)
+        except ValueError as e:
+            return f"未找到建筑 '{building_name}'。可先调 list_buildings 看建筑列表。错误：{e}"
+
     def estimate_resistance(slot: int) -> str:
         """估算某条在办事项若下旨推动的主要阻力。slot 是事项编号（由 list_memorials 给出）。"""
         rows = context.db.list_active_issues()
@@ -149,6 +160,8 @@ def build_minister_tools(character: Character, context: CourtContext):
         list_armies,
         inspect_army,
         list_external_powers,
+        list_buildings,
+        inspect_building,
         estimate_resistance,
         propose_directive,
         dismiss_minister,

@@ -257,8 +257,9 @@ class WebGame:
         for region in self.db.region_payload():
             x, y = region_positions.get(str(region["id"]), (50, 50))
             stationed = [a for a in armies if self._army_belongs_to_region(a, region)]
+            buildings = self.db.building_payload(str(region["id"]))
             risk = int(region["unrest"]) + int(region["military_pressure"]) + (100 - int(region["public_support"]))
-            nodes.append({"id": region["id"], "kind": "region", "x": x, "y": y, "region": region, "armies": stationed, "risk": risk})
+            nodes.append({"id": region["id"], "kind": "region", "x": x, "y": y, "region": region, "armies": stationed, "buildings": buildings, "risk": risk})
         for node_id, (x, y) in theater_positions.items():
             stationed = [a for a in armies if self._army_belongs_to_theater(a, node_id)]
             if stationed:
@@ -606,6 +607,11 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
 @app.get("/api/map")
 async def api_map() -> Dict[str, Any]:
     return {"nodes": web_game.map_nodes()}
+
+
+@app.get("/api/buildings")
+async def api_buildings(region_id: str = "") -> Dict[str, Any]:
+    return {"buildings": web_game.db.building_payload(region_id)}
 
 
 @app.get("/api/ministers")

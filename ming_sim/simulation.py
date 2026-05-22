@@ -16,6 +16,14 @@ from ming_sim.models import GameState
 from ming_sim.token_stats import tlog
 
 
+def _table(rows: List[Dict[str, object]], cols: List[str]) -> Dict[str, object]:
+    """array-of-dicts → header + 二维数组。省掉每行重复的 key，体积约为 dict 形式的 1/3。"""
+    return {
+        "cols": cols,
+        "rows": [[r.get(c) for c in cols] for r in rows],
+    }
+
+
 def simulate_season_with_agno(
     agent: Agent,
     state: GameState,
@@ -48,10 +56,22 @@ def simulate_season_with_agno(
         }
         for ev in gather_candidate_events(state, db)
     ]
-    # payload 只给「大概情况」——核心数值 + 摘要字符串 + 计数。
-    # 地区/军队/派系/阶级的细节不塞全量快照，逼推演官按需调 tool 查实时数据。
-    region_count = db.conn.execute("SELECT COUNT(*) AS c FROM regions").fetchone()["c"]
-    army_count = db.conn.execute("SELECT COUNT(*) AS c FROM armies").fetchone()["c"]
+    # 全量快照单发：地区/军队/建筑全表用 header+二维数组塞进 payload，推演官不再调 tool。
+    # 去掉 21 次 tool round-trip 后每月推演 prompt 从 ~69k 降到 ~12k。
+    region_rows = [
+        dict(r) for r in db.conn.execute(
+            "SELECT name,kind,population,public_support,unrest,natural_disaster,"
+            "human_disaster,registered_land,hidden_land,tax_per_turn,grain_security,"
+            "gentry_resistance,military_pressure,status FROM regions ORDER BY id"
+        ).fetchall()
+    ]
+    army_rows = [
+        dict(r) for r in db.conn.execute(
+            "SELECT name,station,theater,commander,controller,troop_type,manpower,"
+            "maintenance_per_turn,supply,morale,training,equipment,arrears,mobility,"
+            "loyalty,status FROM armies ORDER BY id"
+        ).fetchall()
+    ]
     payload = {
         "year": state.year,
         "period": state.period,
@@ -60,22 +80,22 @@ def simulate_season_with_agno(
         "current_state": dict(state.metrics),
         "treasury_brief": db.treasury_report(state),
         "factions_brief": db.faction_report(),
+        "classes_brief": db.class_report(),
+        "external_powers_brief": db.external_power_report(),
         "active_issues": issues_payload,
         "candidate_events": candidate_events,
         "previous_narrative_tail": previous_narrative[-1500:] if previous_narrative else "",
-        "external_powers_brief": db.external_power_report(),
         "historical_anchor": historical_anchor_for_month(state.year, state.period),
         "victory_status": victory_status(db, state),
-        "regions_hot": db.region_report(limit=4),
-        "armies_hot": db.army_report(limit=4),
-        "region_count": region_count,
-        "army_count": army_count,
+        "regions": _table(region_rows, list(region_rows[0].keys()) if region_rows else []),
+        "armies": _table(army_rows, list(army_rows[0].keys()) if army_rows else []),
+        "buildings": db.building_payload(),
         "fixed_flows": fixed_flows or [],
         "deaths_this_turn": deaths_this_turn or [],
         "data_note": (
-            "以上仅本月大概盘面。地区/军队/派系/阶级/外部势力的具体数值，"
-            "写到细节时调工具查实时数据：view_state、list_regions/inspect_region、"
-            "list_armies/inspect_army、list_external_powers、list_issues/inspect_issue、check_treasury。"
+            "以上为本月全量盘面：regions/armies 是 header+二维数组（cols 列名 + rows 数据），"
+            "buildings 是建筑全表。所有地区/军队/建筑/派系/阶级/外部势力数值均已在册，"
+            "直接据此写邸报，不需另查。"
         ),
     }
     raw = run_agent_stream_text(

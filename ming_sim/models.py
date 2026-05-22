@@ -127,6 +127,21 @@ class Army:
 
 
 @dataclass
+class Building:
+    id: str
+    region_id: str
+    name: str
+    category: str          # 财政/军事/民生/科技/交通/内廷
+    level: int             # 规模 1-5
+    condition: int         # 完好 0-100，产出折算系数
+    maintenance: int       # 每月维护费 万两
+    risk: int              # 0-100
+    output_metric: str     # 国库/内库/军备/民心 或 "" 表示纯叙事
+    output_amount: int     # 每月产出量
+    status: str
+
+
+@dataclass
 class ExternalPower:
     id: str
     name: str

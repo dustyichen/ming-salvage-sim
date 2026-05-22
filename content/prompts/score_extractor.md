@@ -19,7 +19,7 @@
 - `decree_text`：皇帝本{{TURN_UNIT}}颁布的诏书全文
 - 当前 active issues 列表（id/title/bar_value/stage_text/cancellable/resolve_condition/fail_condition）
 - 当前盘面 metrics 与 economy、派系满意度、阶级满意度（全国汇总 + 各省切片）
-- `region_ids` / `army_ids` / `external_power_ids`：合法 id 表
+- `region_ids` / `army_ids` / `external_power_ids` / `building_ids`：合法 id 表
 - `class_names`：合法阶级名表（如 `农民`/`士绅`/`官僚`/`军户`/`商人`/`匠户`/`宗藩`）
 - `candidate_events`：本{{TURN_UNIT}}候选情势清单（id/title）
 - `fiscal_config`：当前各财政系数
@@ -74,6 +74,11 @@ decree new_issue 必填字段：
 - `expected_months`：整数，估测皇帝**只下这道初诏、之后不推不补**时自然走到 resolve/fail 需多少{{TURN_UNIT}}。系统按 100/expected_months 算 inertia（钳 -10~+10）。顺势事件（丰年/敌乱/友邦归附）正数 8~16；阻力事件（民变/饥荒/抗税）负数（-6 = 6 月内崩到失败）；势均力敌写大绝对值如 50；极端速成/速崩 ±3，长线工程 ±24。
 - `resolve_condition` / `fail_condition`：可观测的人事/动作锚点，必填。
 - `ongoing_effects`：**严控，不是惩罚叠加器**。`economy`（每{{TURN_UNIT}}固定收支）**仅限**新设的、确需周期性烧钱/产钱的实体工程/机构（火器营月支匠银、新织造局月入）。**财政报告/亏空警讯、查案/会审/辨争/勘核、纯情势/舆论类一律不配 economy ongoing**（亏空已由 fixed_flows 体现，再扣是双重计账）。`metrics` 可小幅配（灾情每月民心-2），单项绝对值 ≤3。拿不准留空。
+- `effect_on_resolve` / `effect_on_fail`：局势结案/失败时一次性结算。除 `metrics`/`economy`/`factions` 外，可带 `buildings`——**建筑的新建/扩建/废止唯一入口**。`buildings` 是数组，每项一个动作：
+  - `{"action":"create", "region_id","name","category"(白名单 财政/军事/民生/科技/交通/内廷), 可选 level/condition/maintenance/risk/output_metric(白名单 国库/内库/民心/皇威/"")/output_amount/status}`——工程类局势（建火炮厂/开矿厂/筑边堡/设织造局）**走完 resolve 才在 effect_on_resolve 里 create 建筑**；中途失败则 effect_on_fail 不 create。
+  - `{"action":"modify", "building_id"(从 building_ids 选), condition/risk/level/maintenance/output_amount(增量)/output_metric/name/status}`——修缮/升级既有建筑的局势结案时落地。
+  - `{"action":"remove", "building_id"}`——拆毁/废止建筑的局势结案时落地。
+  **建筑数值平时由程序固定结算，绝不在 metric_delta/economy_moves 直接动；建筑变动只能挂在某条局势的 effect 里。**
 
 **(b) 预设事件触发 `origin_kind:"event_pool"`**：邸报**写明已浮现**的 `candidate_events` 候选转 new_issue，**只两字段**：`origin_kind:"event_pool"` 与 `id`，其余系统照预设填。`id` 必须在 `candidate_events` 清单内，严禁臆造；邸报没写到的不放进来。
 
@@ -131,7 +136,7 @@ decree new_issue 必填字段：
       "resolve_condition": "火器营练成精兵五百以上，铸成红夷大炮十门并完成验放",
       "fail_condition": "试炮连续炸膛伤匠、户部停拨银两或保守派参劾撤局",
       "ongoing_effects": {"economy": [{"account": "国库", "delta": -5, "category": "火器营{{TURN_UNIT}}支", "reason": "匠师工银与药料"}]},
-      "effect_on_resolve": {"metrics": {"皇威": 3}, "armies": {"guanning": {"equipment": 6}}},
+      "effect_on_resolve": {"metrics": {"皇威": 3}, "buildings": [{"action": "create", "region_id": "beizhili", "name": "通州火器营", "category": "军事", "level": 2, "maintenance": 3, "output_metric": "", "output_amount": 0, "status": "练成精兵，铸炮验放"}]},
       "effect_on_fail": {"metrics": {"皇威": -4, "国库": -10}},
       "cancellable": "by_progress"
     },

@@ -19,7 +19,17 @@ from ming_sim.assets import (
     str_field,
     string_list,
 )
-from ming_sim.models import Army, Character, Event, ExternalPower, Faction, Region, SocialClass
+from ming_sim.constants import BUILDING_CATEGORIES, BUILDING_OUTPUT_METRICS
+from ming_sim.models import (
+    Army,
+    Building,
+    Character,
+    Event,
+    ExternalPower,
+    Faction,
+    Region,
+    SocialClass,
+)
 
 
 # --- 单项加载器（保留原签名，便于复用与单测）---
@@ -78,7 +88,8 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             raise SystemExit(f"{filename}[{idx}] trigger_gate 必须是对象（key→比较式）。")
         trigger_gate: Dict[str, str] = {}
         # key 形式见 issues._eval_gate_key：metric 名、region.<id>.<field>、army.<id>.<field>、
-        # external.<id>.<field>、class.<name>[@<region>].<field>，多 id 用 | 分隔时末段 .<agg>(max/min/avg/sum)。
+        # building.<id>.<field>、external.<id>.<field>、class.<name>[@<region>].<field>，
+        # 多 id 用 | 分隔时末段 .<agg>(max/min/avg/sum)。
         # 这里只校验比较式格式，key 形式由求值器在 runtime 校验（id/field 存不存在）。
         for mk, mv in gate_raw.items():
             cond = str(mv).strip()
@@ -168,6 +179,37 @@ def load_army_content() -> Dict[str, Army]:
     if not armies:
         raise SystemExit("armies.json 必须至少定义一支军队。")
     return armies
+
+
+def load_building_content() -> Dict[str, Building]:
+    data = require_dict(load_json_asset("buildings.json"), "buildings.json")
+    buildings: Dict[str, Building] = {}
+    for idx, raw in enumerate(require_list(data.get("buildings"), "buildings.json.buildings"), 1):
+        item = require_dict(raw, f"buildings.json.buildings[{idx}]")
+        ctx = f"buildings.json.buildings[{idx}]"
+        building_id = str_field(item, "id", ctx)
+        category = str_field(item, "category", ctx)
+        if category not in BUILDING_CATEGORIES:
+            raise SystemExit(f"{ctx}: category '{category}' 不在白名单 {BUILDING_CATEGORIES}。")
+        output_metric = str(item.get("output_metric") or "")
+        if output_metric not in BUILDING_OUTPUT_METRICS:
+            raise SystemExit(f"{ctx}: output_metric '{output_metric}' 不在白名单 {BUILDING_OUTPUT_METRICS}。")
+        buildings[building_id] = Building(
+            id=building_id,
+            region_id=str_field(item, "region_id", ctx),
+            name=str_field(item, "name", ctx),
+            category=category,
+            level=int_field(item, "level", ctx),
+            condition=int_field(item, "condition", ctx),
+            maintenance=int_field(item, "maintenance", ctx),
+            risk=int_field(item, "risk", ctx),
+            output_metric=output_metric,
+            output_amount=int_field(item, "output_amount", ctx),
+            status=str_field(item, "status", ctx),
+        )
+    if not buildings:
+        raise SystemExit("buildings.json 必须至少定义一座建筑。")
+    return buildings
 
 
 def load_class_content() -> Dict[str, SocialClass]:
@@ -318,6 +360,7 @@ class GameContent:
     event_by_id: Dict[str, Event] = field(default_factory=dict)
     regions: Dict[str, Region] = field(default_factory=dict)
     armies: Dict[str, Army] = field(default_factory=dict)
+    buildings: Dict[str, Building] = field(default_factory=dict)
     faction_metrics: Tuple[str, ...] = ()
     external_powers: Dict[str, ExternalPower] = field(default_factory=dict)
     classes: Dict[str, SocialClass] = field(default_factory=dict)
@@ -349,6 +392,7 @@ class GameContent:
         seed_events = load_event_content("seed_events.json")
         regions = load_region_content()
         armies = load_army_content()
+        buildings = load_building_content()
         external_powers = load_external_powers()
         classes = load_class_content()
         (
@@ -371,6 +415,7 @@ class GameContent:
             event_by_id={ev.id: ev for ev in (*events, *seed_events)},
             regions=regions,
             armies=armies,
+            buildings=buildings,
             faction_metrics=tuple(factions.keys()),
             external_powers=external_powers,
             classes=classes,

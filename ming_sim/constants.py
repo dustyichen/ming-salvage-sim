@@ -24,6 +24,38 @@ REGION_TEXT_FIELDS = ("natural_disaster", "human_disaster", "status")
 ARMY_SCORE_FIELDS = ("supply", "morale", "training", "equipment", "arrears", "mobility", "loyalty")
 ARMY_QUANTITY_FIELDS = ("manpower", "maintenance_per_turn")
 ARMY_TEXT_FIELDS = ("station", "commander", "controller", "troop_type", "status")
+BUILDING_CATEGORIES = ("财政", "军事", "民生", "科技", "交通", "内廷")
+BUILDING_OUTPUT_METRICS = ("国库", "内库", "民心", "皇威", "")
+BUILDING_SCORE_FIELDS = ("condition", "risk")
+BUILDING_QUANTITY_FIELDS = ("level", "maintenance", "output_amount")  # level 钳 1-5
+BUILDING_TEXT_FIELDS = ("name", "output_metric", "status")
+BUILDING_FIELD_LABELS = {
+    "name": "名称",
+    "category": "类别",
+    "level": "等级",
+    "condition": "完好",
+    "maintenance": "维护费",
+    "risk": "风险",
+    "output_metric": "产出去向",
+    "output_amount": "产出量",
+    "status": "状态",
+}
+BUILDING_FIELD_ALIASES = {
+    **{field: field for field in BUILDING_SCORE_FIELDS + BUILDING_QUANTITY_FIELDS + BUILDING_TEXT_FIELDS},
+    "名称": "name",
+    "等级": "level",
+    "规模": "level",
+    "完好": "condition",
+    "维护费": "maintenance",
+    "维护": "maintenance",
+    "风险": "risk",
+    "产出去向": "output_metric",
+    "产出量": "output_amount",
+    "产出": "output_amount",
+    "状态": "status",
+    "原因": "reason",
+    "reason": "reason",
+}
 EXTERNAL_POWER_SCORE_FIELDS = ("leverage", "satisfaction", "military_strength", "cohesion", "supply")
 EXTERNAL_POWER_TEXT_FIELDS = ("leader", "stance", "agenda", "status", "last_action")
 EXTERNAL_POWER_FIELD_LABELS = {

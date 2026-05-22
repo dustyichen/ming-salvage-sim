@@ -19,9 +19,8 @@ from ming_sim.content import GameContent
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
 from ming_sim.llm_model import create_chat_model, extract_agent_text
-from ming_sim.models import CourtContext, GameState, LLMConfig
-from ming_sim.token_stats import tlog
-from ming_sim.tools import build_simulator_tools
+from ming_sim.models import GameState, LLMConfig
+from ming_sim.token_stats import record_stream_metrics, tlog
 
 _content: Optional[GameContent] = None
 
@@ -148,6 +147,11 @@ def run_agent_stream_text(
     else:
         abort_llm_contract(tag, "流式无内容且无终结事件", "")
     tlog(f"[{tag}] 完成，{len(text)} 字，工具调用 {tool_calls} 次")
+    # 流式 openai response 无 .usage，monkeypatch 抓不到；从终结事件 metrics 补记 token。
+    if final_output is not None:
+        metrics = getattr(final_output, "metrics", None)
+        model_id = getattr(getattr(agent, "model", None), "id", None) or "stream"
+        record_stream_metrics(str(model_id), metrics, caller_tag=tag)
     return text
 
 
@@ -240,12 +244,11 @@ def create_season_simulator_agent(
 ) -> Agent:
     """月末推演日讲官。
 
-    传入 state+db 时装备只读查询工具（view_state/list_regions/inspect_army 等），
-    推演官可按需查实时盘面，让月末邸报有据。两者缺一则不挂工具（兼容旧调用）。
+    全量盘面（地区/军队/建筑/派系/阶级/外部势力）由 simulate_season_with_agno 单发塞进
+    payload，推演官不再挂只读 tool —— 去掉 tool round-trip 后每月 prompt 从 ~69k 降到 ~12k。
+    state/db 参数保留兼容旧调用，已不使用。
     """
-    tools = None
-    if state is not None and db is not None:
-        tools = build_simulator_tools(CourtContext(state=state, db=db))
+    del state, db  # 全量盘面走 payload，不再建 tool
     return Agent(
         name="月末推演日讲官",
         id="season-simulator",
@@ -253,8 +256,6 @@ def create_season_simulator_agent(
         db=agno_db,
         model=create_chat_model(llm_config, temperature=0.9, top_p=0.95, max_tokens=4500, enable_thinking=True),
         instructions=[_ctx().game_world_prompt, _ctx().season_simulator_prompt],
-        tools=tools,
-        tool_call_limit=16 if tools else None,
         add_history_to_context=False,
         markdown=False,
     )
