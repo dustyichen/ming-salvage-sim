@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-import random
+import json
 from typing import Dict, List, Optional
 
 from agno.agent import Agent
@@ -87,31 +87,122 @@ def _make_cultivate_tool(character: Character, context: CourtContext):
     return cultivate_consort
 
 
+# 后宫预设立绘池：编号 → 该图的人物身份/气质（LLM 据此为秀女配图，确保人图一致）。
+# 与 web/public/portraits/consort_pool_<N>.png 及 docs/portrait-prompts.md 文末清单对应。
+CONSORT_POOL_IDENTITIES: Dict[int, str] = {
+    1: "满洲格格——英武明艳，关外贵女，骑射出身",
+    2: "江湖卖艺女——活泼灵动，杂耍歌舞，市井出身",
+    3: "女侠——飒爽英姿，习武佩剑，江湖出身",
+    4: "江南名妓——才情风流，诗词歌赋，秦淮出身",
+    5: "才女画师——洒脱灵动，丹青妙笔，书香出身",
+    6: "棋待诏——冷静知性，精于围棋，弈林出身",
+    7: "道姑——仙气飘逸，修道清修，方外出身",
+    8: "忧郁美人——秋色清愁，沉静寡言，文士门第",
+    9: "波斯商女——异域浓彩，丝路而来，西域胡商之女",
+    10: "琴师——清雅文艺，善抚瑶琴，乐坊出身",
+    11: "娇艳贵女——明丽妩媚，雍容华贵，勋贵门第",
+    12: "女医——温柔聪慧，通晓医药，杏林出身",
+    13: "东厂女探——暗黑魅惑，身手不凡，厂卫出身",
+    14: "端庄贵妇——母仪雍容，知书达礼，名门嫡女",
+    15: "茶道名媛——温润恬静，精于茶艺，士绅之家",
+    16: "南洋舶来——海岛风情，远渡而来，南洋舶商之女",
+}
+
+
 def _make_select_consort_tool(context: CourtContext):
     """生成选妃呈名单 tool，挂在司礼监/礼部大臣上。
-    从尚未入宫的待选采女池（status=candidate 的后宫人物）随机抽 N 人，
-    呈上基本信息供皇帝挑选。只展示不入库——皇帝看中后另下诏册封，走 candidate 升格路径。"""
+    秀女由 LLM 据预设立绘池的身份现场拟就，tool 落库为待选采女（status=candidate），
+    人设与所选立绘一致。只立候选不册封——皇帝看中后另下诏册封，走 candidate 升格路径。"""
 
-    def present_consort_candidates(count: int = 3) -> str:
-        """【司礼监/礼部专属】皇帝下旨选妃/采选秀女时，由内官（尚宫局）会同礼部从备选采女中
-        遴选若干名，呈上她们的姓名、性情、才艺供御览。皇帝看中哪位，再另降诏书册封入宫。
+    def _pool_used() -> set:
+        rows = context.db.conn.execute(
+            "SELECT portrait_id FROM characters WHERE portrait_id LIKE 'consort_pool_%'"
+        ).fetchall()
+        used = set()
+        for r in rows:
+            try:
+                used.add(int(str(r["portrait_id"]).replace("consort_pool_", "")))
+            except ValueError:
+                pass
+        return used
 
-        参数：
-        - count：本次呈选人数，1-6 之间。皇帝没说就默认 3。
+    def present_consort_candidates(consorts_json: str = "") -> str:
+        """【司礼监/礼部专属】皇帝下旨选妃/采选秀女时，由内官会同礼部物色佳丽，恭呈御览。
+
+        **必须按预设立绘配人**：每名秀女选定一个未占用的立绘编号 portrait（见下表身份），
+        并据该立绘的身份气质拟人设（name/style/skills/summary 要与立绘身份吻合，不可张冠李戴）。
+
+        立绘池身份（portrait 编号→身份；已被占用的编号不要再选，先以空参调用可查当前可用编号）：
+        {POOL_TABLE}
+
+        参数 consorts_json：JSON 数组字符串，3-5 人。每名秀女对象：
+          {{"portrait": 4, "name": "柳如烟", "style": "才情风流",
+            "skills": ["诗词","琵琶"], "summary": "秦淮名妓，色艺双绝", "faction": "中宫"}}
+          portrait 必填且取自可用编号；name 须新颖不与在朝人物重名。
 
         仅当皇帝明确表达「选妃」「采选秀女」「为朕物色后宫」等意图时调此 tool。
+        现编的秀女即刻立为待选采女，皇帝降诏册封后方升为在宫妃嫔。
         """
         content = _ctx()
-        pool = [
-            c for c in content.characters.values()
-            if c.office_type == "后宫" and getattr(c, "status", "") == "candidate"
-        ]
-        if not pool:
-            return "回禀陛下，备选采女已尽数入宫或遣散，眼下并无可供遴选之人。"
-        n = max(1, min(6, int(count) if str(count).strip() else 3))
-        chosen = random.sample(pool, min(n, len(pool)))
-        lines = ["臣等已从待选采女中遴选数名，恭呈御览："]
-        for idx, c in enumerate(chosen, 1):
+        try:
+            raw = json.loads(consorts_json) if isinstance(consorts_json, str) and consorts_json.strip() else consorts_json
+        except (json.JSONDecodeError, TypeError):
+            return "（拟选名单格式有误，请以 JSON 数组重拟，每名含 portrait/name/style/skills/summary。）"
+        if isinstance(raw, dict):
+            raw = raw.get("consorts") or raw.get("candidates") or [raw]
+        if not isinstance(raw, list) or not raw:
+            free = sorted(set(CONSORT_POOL_IDENTITIES) - _pool_used())
+            table = "\n".join(f"  {i}：{CONSORT_POOL_IDENTITIES[i]}" for i in free)
+            return ("（尚未拟出秀女。请按下列可用立绘配人，回传 JSON 数组：\n"
+                    + table + "\n每名含 portrait/name/style/skills/summary。）")
+
+        existing_names = set(content.characters.keys())
+        used = _pool_used()
+        chosen: List[tuple[Character, int]] = []
+        for item in raw[:6]:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name or name in existing_names:
+                continue
+            try:
+                pid = int(item.get("portrait"))
+            except (TypeError, ValueError):
+                continue
+            if pid not in CONSORT_POOL_IDENTITIES or pid in used:
+                continue  # 编号非法或已占用，跳过
+            skills = item.get("skills") or []
+            if isinstance(skills, str):
+                skills = [s.strip() for s in skills.replace("、", ",").split(",") if s.strip()]
+            consort = Character(
+                name=name,
+                office="采女（待选）",
+                office_type="后宫",
+                faction=str(item.get("faction") or "中宫"),
+                aliases=[],
+                personal_skills=[str(s).strip() for s in skills if str(s).strip()],
+                loyalty=int(item.get("loyalty") or 60),
+                ability=int(item.get("ability") or 55),
+                integrity=int(item.get("integrity") or 60),
+                courage=int(item.get("courage") or 50),
+                style=str(item.get("style") or "温婉"),
+                status="candidate",
+                summary=str(item.get("summary") or "").strip(),
+                portrait_id=f"consort_pool_{pid}",  # 显式指定，add_character 不再自动分配
+            )
+            context.db.add_character(context.state, consort)
+            content.characters[name] = consort
+            existing_names.add(name)
+            used.add(pid)
+            chosen.append((consort, pid))
+
+        if not chosen:
+            free = sorted(set(CONSORT_POOL_IDENTITIES) - _pool_used())
+            return ("（拟选的秀女或重名、或立绘编号非法/已占用，未能立为候选。"
+                    f"当前可用立绘编号：{free}，请重拟。）")
+
+        lines = ["臣等已为陛下物色数名待选采女，恭呈御览："]
+        for idx, (c, _pid) in enumerate(chosen, 1):
             skills = "、".join(c.personal_skills) if c.personal_skills else "—"
             summary = (c.summary or "").strip()
             if len(summary) > 50:
@@ -123,6 +214,9 @@ def _make_select_consort_tool(context: CourtContext):
         lines.append("陛下若有中意者，可降诏册封其位份，即可入宫。")
         return "\n".join(lines)
 
+    # 池身份表烤进 docstring（全 16 槽静态，不含动态 free 列表 → 工具 schema 跨回合不变，保缓存）。
+    pool_table = "\n".join(f"  {i}：{CONSORT_POOL_IDENTITIES[i]}" for i in sorted(CONSORT_POOL_IDENTITIES))
+    present_consort_candidates.__doc__ = present_consort_candidates.__doc__.replace("{POOL_TABLE}", pool_table)
     return present_consort_candidates
 
 
@@ -173,13 +267,14 @@ def create_minister_agent(
             "禁止因自己的角色扮演台词（如写了退场动作）而主动调这两个 tool。等皇帝指令，不要自行判断。",
         ]
         tools = build_minister_tools(character, context)
-        # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃，从待选采女池呈名单。
+        # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃：现场拟就秀女名单呈御览。
         if character.office_type in ("司礼监", "礼部"):
             tools.append(_make_select_consort_tool(context))
             instructions.append(
                 "【选妃职责】皇帝若下旨选妃、采选秀女、为后宫物色佳丽，"
-                "你可调 present_consort_candidates(count) 从待选采女中遴选数名呈御览。"
-                "皇帝看中者会另降册封诏书，不必你拟旨。"
+                "你须现场拟就 3-5 名秀女（各起新颖闺名，配性情、才艺、出身简介），"
+                "以 JSON 数组传入 present_consort_candidates(consorts_json) 呈御览。"
+                "现编的秀女即刻立为待选采女，皇帝看中者会另降册封诏书，不必你拟旨。"
             )
     return Agent(
         name=character.name,

@@ -485,6 +485,20 @@ function App() {
     setSuggestions(data.suggestions);
   }, []);
 
+  const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const resp = await fetch(`/api/consorts/${encodeURIComponent(ministerName)}/portrait`, {
+      method: "POST",
+      body: form,
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+      throw new Error(err.detail || resp.statusText);
+    }
+    await loadState();  // 重新拉 state，新 portrait_id 流回卡片
+  }, [loadState]);
+
   React.useEffect(() => {
     loadState().catch((err) => setError(err.message));
   }, [loadState]);
@@ -845,6 +859,7 @@ function App() {
         onToggle={() => { setHaremDrawerOpen((current) => !current); }}
         onClose={guardClose(() => setHaremDrawerOpen(false))}
         onOpenChat={openChat}
+        onUploadPortrait={uploadPortrait}
       />
 
       <SituationPanel issues={state.issues} closedIssues={state.closed_this_turn || []} />
@@ -1031,26 +1046,41 @@ function MinisterCardList({
   selectedMinister,
   emptyNote,
   onOpenChat,
+  onUploadPortrait,
 }: {
   list: Minister[];
   portraitPrefix: string;
   selectedMinister: string;
   emptyNote: string;
   onOpenChat: (minister: Minister) => void;
+  onUploadPortrait?: (ministerName: string, file: File) => Promise<void>;
 }) {
   return (
     <div className="minister-list">
       {list.map((minister) => {
-        // 优先用专属头像（按姓名或 id 查找），无则用 portrait_id（池编号），再无则占位符
-        const dedicated = `/portraits/${portraitPrefix}${minister.id ?? minister.name}.png`;
-        const poolFallback = minister.portrait_id ? `/portraits/${minister.portrait_id}.png` : undefined;
+        // custom:<name> = 皇帝上传的自定义立绘，最优先；其次专属图（姓名/id）；再次 portrait_id 池图；最后占位符。
+        const isCustom = minister.portrait_id?.startsWith("custom:");
+        const dedicated = isCustom
+          ? `/portraits/custom/${encodeURIComponent(minister.name)}?t=${cacheBust(minister.portrait_id!)}`
+          : `/portraits/${portraitPrefix}${minister.id ?? minister.name}.png`;
+        const poolFallback = !isCustom && minister.portrait_id
+          ? `/portraits/${minister.portrait_id}.png`
+          : undefined;
         return (
           <button
             key={minister.name}
             className={`minister-card ${selectedMinister === minister.name ? "selected" : ""}`}
             onClick={() => onOpenChat(minister)}
           >
-            <MinisterPortrait primary={dedicated} fallback={poolFallback} name={minister.name} />
+            <div className="minister-card-portrait-wrap">
+              <MinisterPortrait primary={dedicated} fallback={poolFallback} name={minister.name} />
+              {onUploadPortrait && (
+                <PortraitUploadButton
+                  ministerName={minister.name}
+                  onUpload={onUploadPortrait}
+                />
+              )}
+            </div>
             <div className="minister-card-info">
               <div className="minister-card-top">
                 <span className="minister-name">{minister.name}</span>
@@ -1064,6 +1094,62 @@ function MinisterCardList({
       })}
       {!list.length && <div className="empty-note">{emptyNote}</div>}
     </div>
+  );
+}
+
+// 自定义立绘文件名固定（一人一图），故按 portrait_id 之外另用上传时间戳刷缓存。
+const _portraitBust: Record<string, number> = {};
+function cacheBust(key: string): number {
+  if (!_portraitBust[key]) _portraitBust[key] = Date.now();
+  return _portraitBust[key];
+}
+
+function PortraitUploadButton({
+  ministerName,
+  onUpload,
+}: {
+  ministerName: string;
+  onUpload: (ministerName: string, file: File) => Promise<void>;
+}) {
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = React.useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        className="portrait-upload-btn"
+        title="上传立绘"
+        disabled={busy}
+        onClick={(e) => {
+          e.stopPropagation();  // 别触发卡片的召见
+          inputRef.current?.click();
+        }}
+      >
+        <Upload size={13} />
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        style={{ display: "none" }}
+        onClick={(e) => e.stopPropagation()}
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";  // 允许重选同一文件
+          if (!file) return;
+          setBusy(true);
+          try {
+            // 立即刷该人物缓存键，loadState 回来后新图不被旧缓存挡住。
+            _portraitBust[`custom:${ministerName}`] = Date.now();
+            await onUpload(ministerName, file);
+          } catch (err) {
+            window.alert(`上传失败：${(err as Error).message}`);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
+    </>
   );
 }
 
@@ -1143,6 +1229,7 @@ function HaremDrawer({
   onToggle,
   onClose,
   onOpenChat,
+  onUploadPortrait,
 }: {
   consorts: Minister[];
   haremGroup: string;
@@ -1152,6 +1239,7 @@ function HaremDrawer({
   onToggle: () => void;
   onClose: () => void;
   onOpenChat: (minister: Minister) => void;
+  onUploadPortrait: (ministerName: string, file: File) => Promise<void>;
 }) {
   React.useEffect(() => {
     if (!open) return;
@@ -1193,6 +1281,7 @@ function HaremDrawer({
           selectedMinister={selectedMinister}
           emptyNote="后宫暂无可召见之人。"
           onOpenChat={onOpenChat}
+          onUploadPortrait={onUploadPortrait}
         />
       </aside>
     </>

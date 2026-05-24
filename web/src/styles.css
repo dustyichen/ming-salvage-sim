@@ -828,6 +828,13 @@ select:focus-visible {
   transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
 }
 
+.minister-card-portrait-wrap {
+  position: relative;
+  flex: 0 0 213px;
+  width: 160px;
+  height: 213px;
+}
+
 .minister-card-portrait {
   width: 160px;
   height: 213px;
@@ -837,6 +844,38 @@ select:focus-visible {
   display: block;
   border-radius: 7px 7px 0 0;
   background: rgba(155, 120, 80, 0.18);
+}
+
+.portrait-upload-btn {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  background: rgba(45, 28, 14, 0.55);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 150ms ease, background 150ms ease;
+}
+
+.minister-card:hover .portrait-upload-btn {
+  opacity: 1;
+}
+
+.portrait-upload-btn:hover {
+  background: rgba(143, 47, 37, 0.85);
+}
+
+.portrait-upload-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .minister-card-portrait-placeholder {
@@ -2262,9 +2301,9 @@ button:disabled {
   background-position: center;
 }
 
-/* 后宫独立弹窗背景：寝宫/后花园风格（暂用 bg_chat 占位，有专图后换） */
+/* 后宫独立弹窗背景：寝宫风格 */
 .harem-drawer {
-  background-image: url("/bg_harem.png"), url("/bg_chat.png");
+  background-image: url("/bg_harem.png");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;

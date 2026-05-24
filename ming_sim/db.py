@@ -576,19 +576,21 @@ class GameDB:
             )
         for character in self.content.characters.values():
             existing = self.conn.execute(
-                "SELECT status, status_reason, status_changed_turn FROM characters WHERE name=?",
+                "SELECT status, status_reason, status_changed_turn, portrait_id FROM characters WHERE name=?",
                 (character.name,)
             ).fetchone()
             keep_status = existing["status"] if existing else character.status
             keep_reason = existing["status_reason"] if existing else ""
             keep_turn = existing["status_changed_turn"] if existing else 0
+            # 已落库的 portrait_id 优先保留（运行时分配的池图不被重 seed 抹掉）；否则取设定。
+            keep_portrait = (existing["portrait_id"] if existing and existing["portrait_id"] else character.portrait_id)
             self.conn.execute(
                 """
                 INSERT OR REPLACE INTO characters
                 (name, office, office_type, faction, personal_skills, loyalty, ability, integrity, courage, style,
                  birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-                 status, status_reason, status_changed_turn)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 status, status_reason, status_changed_turn, portrait_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     character.name,
@@ -609,6 +611,7 @@ class GameDB:
                     keep_status,
                     keep_reason,
                     keep_turn,
+                    keep_portrait,
                 ),
             )
             self.conn.execute(
@@ -1060,6 +1063,14 @@ class GameDB:
         while n in used:
             n += 1
         return f"{prefix}{n}"
+
+    def set_portrait_id(self, name: str, portrait_id: str) -> None:
+        """改某人物的头像标识（如皇帝上传自定义立绘后落库）。"""
+        self.conn.execute(
+            "UPDATE characters SET portrait_id=? WHERE name=?",
+            (portrait_id, name),
+        )
+        self.conn.commit()
 
     def add_character(self, state: GameState, character: "Character") -> None:
         """运行时新建人物（吏部任命/皇帝点名）。已存在同名则不动，避免覆盖既有状态。"""

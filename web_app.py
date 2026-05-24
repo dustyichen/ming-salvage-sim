@@ -15,9 +15,9 @@ import random
 import threading
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -40,6 +40,12 @@ from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错
 from ming_sim.models import Character, LLMConfig, monthly_amount
 
 WEB_DIST = os.path.join(ROOT_DIR, "web", "dist")
+# 用户上传的自定义立绘存档级目录（不随 build 清空，git 可忽略）。
+UPLOAD_PORTRAIT_DIR = os.path.join(ROOT_DIR, "data", "uploads", "portraits")
+# 自定义立绘 portrait_id 前缀；前端据此解析到 /portraits/custom/<name>.png。
+CUSTOM_PORTRAIT_PREFIX = "custom:"
+ALLOWED_PORTRAIT_TYPES = {"image/png", "image/jpeg", "image/webp"}
+MAX_PORTRAIT_BYTES = 8 * 1024 * 1024  # 8MB 上限
 
 
 class ChatRequest(BaseModel):
@@ -216,6 +222,17 @@ class WebGame:
 
     def refresh_turn(self) -> None:
         self.session.begin_turn()
+
+    # ── 自定义立绘 ────────────────────────────────────────────────────────
+    def find_character(self, name: str) -> Optional[Character]:
+        return self.content.characters.get(name)
+
+    def set_custom_portrait(self, name: str, portrait_id: str) -> None:
+        """落库并回写内存：把某人物 portrait_id 指向自定义立绘。"""
+        self.db.set_portrait_id(name, portrait_id)
+        character = self.content.characters.get(name)
+        if character is not None:
+            character.portrait_id = portrait_id
 
     # ── 序列化 ────────────────────────────────────────────────────────────
     def public_character(self, character: Character) -> Dict[str, Any]:
@@ -997,6 +1014,66 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(e)) from None
     return {"base_url": cfg.base_url, "model": cfg.model, "has_api_key": bool(cfg.api_key)}
+
+
+# ── 自定义立绘上传/读取 ──────────────────────────────────────────────────────
+# content_type → 存盘扩展名。一人一图，上传新图会顶掉旧扩展名的文件。
+_PORTRAIT_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+
+
+def _find_portrait_file(name: str) -> Optional[str]:
+    """找该人物已存在的自定义立绘文件（任一扩展名），无则 None。"""
+    for ext in _PORTRAIT_EXT.values():
+        path = os.path.join(UPLOAD_PORTRAIT_DIR, f"{name}.{ext}")
+        if os.path.exists(path):
+            return path
+    return None
+
+
+@app.post("/api/consorts/{name}/portrait")
+async def api_upload_portrait(name: str, file: UploadFile = File(...)) -> Dict[str, Any]:
+    # 只接受已存在的人物名 → 集合固定，杜绝路径穿越/任意写。
+    character = web_game.find_character(name)
+    if character is None:
+        raise HTTPException(status_code=404, detail="未找到该人物")
+    ext = _PORTRAIT_EXT.get(file.content_type or "")
+    if ext is None:
+        raise HTTPException(status_code=400, detail="仅支持 PNG/JPEG/WebP 图片")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="文件为空")
+    if len(data) > MAX_PORTRAIT_BYTES:
+        raise HTTPException(status_code=400, detail="图片过大（上限 8MB）")
+    os.makedirs(UPLOAD_PORTRAIT_DIR, exist_ok=True)
+    # 先清掉该人物的旧图（可能扩展名不同），再写新图。
+    old = _find_portrait_file(name)
+    if old is not None:
+        os.remove(old)
+    with open(os.path.join(UPLOAD_PORTRAIT_DIR, f"{name}.{ext}"), "wb") as fh:
+        fh.write(data)
+    web_game.set_custom_portrait(name, f"{CUSTOM_PORTRAIT_PREFIX}{name}")
+    return {"name": name, "portrait_id": f"{CUSTOM_PORTRAIT_PREFIX}{name}"}
+
+
+@app.delete("/api/consorts/{name}/portrait")
+async def api_delete_portrait(name: str) -> Dict[str, Any]:
+    character = web_game.find_character(name)
+    if character is None:
+        raise HTTPException(status_code=404, detail="未找到该人物")
+    old = _find_portrait_file(name)
+    if old is not None:
+        os.remove(old)
+    # 复位 portrait_id：清空 → 前端回落到池图（add/seed 时会按 office_type 再分配）。
+    web_game.set_custom_portrait(name, "")
+    return {"name": name, "portrait_id": ""}
+
+
+@app.get("/portraits/custom/{name}")
+async def api_get_portrait(name: str):
+    path = _find_portrait_file(name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="无自定义立绘")
+    return FileResponse(path)
 
 
 if os.path.isdir(WEB_DIST):

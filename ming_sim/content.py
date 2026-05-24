@@ -70,6 +70,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             debut_month=int(item.get("debut_month") or 0),
             status=str(item.get("status") or "active"),
             summary=str(item.get("summary") or ""),
+            portrait_id=str(item.get("portrait_id") or ""),
         )
 
     if not factions or not characters:
