@@ -91,7 +91,7 @@
 | 字段 | 含义 | 约束 |
 |---|---|---|
 | `metric_delta` | 两量表本{{TURN_UNIT}}增量（民心/皇威）| 增量非新值。按上方「档位判定标准」自判档位。 |
-| `economy_moves` | 浮动收支（旨意执行/事件/赏罚/查抄/赈灾追加） | 每项 `account`(国库/内库)+`delta`+`category`+`reason`。单位万两（「国库263万两(-15)」→delta=-15）。**`account` 按钱出自哪个库定，不按用途定**：凡「内帑/内库/宫中/皇帝私帑」拨出的支出，`account`=内库（即便用于补军饷/赈灾等外朝用途，也记内库扣减）；户部/太仓/外朝财政拨出的记国库。查抄入帑分内外同理（抄家充内帑→内库正项，充太仓→国库正项）。`fixed_flows` 已落账的固定项（田赋/辽饷/盐税/商税/宗室禄米/百官俸禄/工部/赈灾/九边补给/各军军饷/皇庄/织造/矿税/宫廷/内廷俸/妃嫔）**不进这里**。 |
+| `economy_moves` | 浮动收支（旨意执行/事件/赏罚/查抄/赈灾追加） | 每项 `account`(国库/内库)+`delta`+`category`+`reason`。单位万两（「国库263万两(-15)」→delta=-15）。**`account` 按钱出自哪个库定，不按用途定，不按经办衙门定**：凡「内帑/内库/宫中/皇帝私帑」拨出的支出，`account`=内库（即便用于补军饷/赈灾/解关外等外朝用途，即便由兵部/户部/太仓经手调度，也只记内库扣减一笔，不得同时或改记国库流出）；户部/太仓/外朝财政拨出的记国库。查抄入帑分内外同理（抄家充内帑→内库正项，充太仓→国库正项）。**反例（禁止）**：内帑出三万两由兵部解关外，写成 `{"account":"国库","delta":-3,...}` 或同时写国库与内库两笔——错。正解：只写 `{"account":"内库","delta":-3,...}` 一笔；经办衙门写进 `reason`，不影响 `account`。`fixed_flows` 已落账的固定项（田赋/辽饷/盐税/商税/宗室禄米/百官俸禄/工部/赈灾/九边补给/各军军饷/皇庄/织造/矿税/宫廷/内廷俸/妃嫔）**不进这里**。 |
 | `faction_delta` | 派系满意度增量（阉党/皇党/军队/东林/宗室/中立/西学） | 增量非新值。按上方「档位判定标准」选档。 |
 | `class_delta` | 阶级满意度/影响力增量。key 形如 `农民` 表全国汇总；`农民@shaanxi` 表省级切片（region_id 从 `region_ids` 选） | value 形如 `{"satisfaction": -5, "leverage": +2}`，增量非新值。两字段都可写、可只写一个。**联动靠你自觉判**：①党派强推损某阶级利益 → 该阶级 sat 跌，且该党派 sat 也跟着跌（代言失职）；②东林 ↔ 江南士绅唇齿，抄江南/苏松士绅 → 东林 lev 同向掉，杀东林台谏 → 江南士绅 sat 同向掉；③阉党 ↔ 内廷宦官+地方税监同体，极端清算阉党时其代表阶级 sat+lev 双降；④军队 ↔ 军户/将门基本盘，欠饷军户 sat 长低 → 军队党 sat 也跌；⑤宗室党 ↔ 宗藩阶级同向（削宗禄/抄藩田同时损二者）；⑥极端手段（抄家屠戮）单次 ±20~40。阶级 sat≤30 且 lev≥60 易触发该省该阶级骚乱事件，由季末推演判定。 |
 | `region_delta` | 各地区数值变化，key=region_id | key **必须**从 `region_ids` 选。合法字段仅：量表 `public_support`/`unrest`/`grain_security`/`gentry_resistance`/`military_pressure`（±10、极端 ±20）、腐败度 `corruption`（0-100，整治贪腐/巡按/抄家→负值 ±5~±20，放任失控→正值；只在有明确整治或失控动作时才填）、数量 `population`/`registered_land`/`hidden_land`/`tax_per_turn`、文字 `natural_disaster`/`human_disaster`/`status`。**减人口写 `population`，不是 `manpower`（`manpower` 是军队字段，严禁写入地区）。** 无变化填 `{}`。 |
@@ -136,7 +136,7 @@ decree new_issue 必填字段：
 - `expected_months`：整数，估测皇帝**只下这道初诏、之后不推不补**时自然走到 resolve/fail 需多少{{TURN_UNIT}}。系统按 100/expected_months 算 inertia（钳 -10~+10）。顺势事件（丰年/敌乱/友邦归附）正数 8~16；阻力事件（民变/饥荒/抗税）负数（-6 = 6 月内崩到失败）；势均力敌写大绝对值如 50；极端速成/速崩 ±3，长线工程 ±24。
 - `resolve_condition` / `fail_condition`：可观测的人事/动作锚点，必填。
 - `ongoing_effects`：**严控，不是惩罚叠加器**。`economy`（每{{TURN_UNIT}}固定收支）**仅限**新设的、确需周期性烧钱/产钱的实体工程/机构（火器营月支匠银、新织造局月入）。**财政报告/亏空警讯、查案/会审/辨争/勘核、纯情势/舆论类一律不配 economy ongoing**（亏空已由 fixed_flows 体现，再扣是双重计账）。`metrics` 可小幅配（灾情每月民心-2），单项绝对值 ≤3。拿不准留空。
-- `effect_on_resolve` / `effect_on_fail`：局势结案/失败时一次性结算。除 `metrics`/`economy`/`factions` 外，可带 `buildings`——**建筑的新建/扩建/废止唯一入口**。`buildings` 是数组，每项一个动作：
+- `effect_on_resolve` / `effect_on_fail`：局势结案/失败时一次性永久结算（民心/皇威/钱粮）。**`effect_on_fail` 是「会不会崩坏」的开关**：填了=这局势有「彻底失败终结」态，bar 能跌到 0、转 failed、落此永久重创（民变镇不住成燎原、边镇沦陷、改革废止、查案翻盘）；**留空 `{}`=不可崩坏**——bar 下限钳在 1、永不 failed，只能靠 ongoing 持续流血、或赈济平息走 resolve 收尾。**不可控天象/客观灾害（天灾/大旱/水患/瘟疫/饥荒本身）一律 `effect_on_fail:{}`**：旱涝是天定，没有「失败」这一刻，只有缓解或拖着。由其衍生的人祸（流寇坐大、灾民暴动）才会崩坏，那是另立的人祸局势。除 `metrics`/`economy`/`factions` 外，effect 可带 `buildings`——**建筑的新建/扩建/废止唯一入口**。`buildings` 是数组，每项一个动作：
   - `{"action":"create", "region_id","name","category"(白名单 财政/军事/民生/科技/交通/内廷), 可选 level/condition/maintenance/risk/output_metric(白名单 国库/内库/民心/皇威/"")/output_amount/status}`——工程类局势（建火炮厂/开矿厂/筑边堡/设织造局）**走完 resolve 才在 effect_on_resolve 里 create 建筑**；中途失败则 effect_on_fail 不 create。
   - `{"action":"modify", "building_id"(从 building_ids 选), condition/risk/level/maintenance/output_amount(增量)/output_metric/name/status}`——修缮/升级既有建筑的局势结案时落地。
   - `{"action":"remove", "building_id"}`——拆毁/废止建筑的局势结案时落地。
@@ -154,7 +154,7 @@ decree new_issue 必填字段：
 
 **归并**：邸报冒出的新现象**不许立成新局势**——能并入既有局势就推 `issue_advances`；重大但不能并入 → 留 narrative；鸡毛蒜皮（揭帖、抗议、地方小骚动、单次贪墨）→ 留 narrative。命中任一即并入：① 是某既有局势触发的政策/查办在地方的具体表现？② 是其反弹/抗议/科道交章/士绅联名？③ 是同一矛盾的不同侧面？④ 换地区换人物对手诉求是否仍相同？（例：既有 #4「江南清丈案」，邸报「南都科道交参/苏松士绅联名」全并入 #4。）
 
-**结案**（`close_issues`）：对照 resolve_condition / fail_condition——邸报满足 resolve 或明说「已结案/已平/已罢」→ reason=`resolved`；满足 fail 或明说「已失控/已溃决/彻底失败」→ reason=`failed`。**不论 bar 是否到 100/0**，条件命中就上报；皇帝一道硬旨办死（下令拿人、强令结案）也直接 close。已 close 的局势当{{TURN_UNIT}}不再放 issue_advances。
+**结案**（`close_issues`）：对照 resolve_condition / fail_condition——邸报满足 resolve 或明说「已结案/已平/已罢」→ reason=`resolved`；满足 fail 或明说「已失控/已溃决/彻底失败」→ reason=`failed`。**不论 bar 是否到 100/0**，条件命中就上报；皇帝一道硬旨办死（下令拿人、强令结案）也直接 close。**例外：不可崩坏局势（`effect_on_fail` 为空——天灾/大旱/水患/瘟疫/饥荒本身等不可控天象）禁止 reason=`failed`**，它们没有「失败终结」态，只能 resolved（赈济平息）或不结案继续流血；硬报系统会拒。已 close 的局势当{{TURN_UNIT}}不再放 issue_advances。
 
 **撤销**（`cancels`）：奏章说「罢/止/撤/停办」+ 列了沉没成本才转，否则空 list。
 

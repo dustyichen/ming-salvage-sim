@@ -163,6 +163,31 @@ def build_minister_tools(character: Character, context: CourtContext):
             level = "低"
         return f"{row['title']}阻力{level}，主要牵涉：{tags or '—'}。估算阻力值：{resistance}。"
 
+    def read_past_report(year: int = 0, month: int = 0) -> str:
+        """读某年某月邸报全文，了解此前朝局走向、地方动静、灾兵祸福，避免接旨时凭空臆议。
+        参数：
+        - year：年份（如 1628）。缺省（0）默认查上月。
+        - month：月份（1-12）。缺省（0）配 year 缺省即上月；若给了 year 而 month=0，按 1 月算。
+        所求年月未到、无邸报存档或在登基之前 → 提示『未见正式记录』。"""
+        # 缺省：查上月（state.year/period - 1）
+        if not year:
+            target_year = context.state.year
+            target_month = context.state.period - 1
+            if target_month < 1:
+                target_month = 12
+                target_year -= 1
+        else:
+            target_year = int(year)
+            target_month = int(month) if month else 1
+            target_month = max(1, min(12, target_month))
+        row = context.db.conn.execute(
+            "SELECT turn, report FROM turn_reports WHERE year=? AND period=?",
+            (target_year, target_month),
+        ).fetchone()
+        if not row or not row["report"]:
+            return f"{target_year}年{target_month}月未见正式邸报记录。"
+        return f"【{target_year}年{target_month}月邸报】\n{row['report']}"
+
     def check_treasury() -> str:
         """查国库、内库、收支和欠账。"""
         return skill_template("check_treasury_prefix") + context.db.treasury_report(context.state)
@@ -250,6 +275,7 @@ def build_minister_tools(character: Character, context: CourtContext):
         list_court,
         inspect_minister,
         estimate_resistance,
+        read_past_report,
         propose_directive,
         dismiss_minister,
         summon_minister,

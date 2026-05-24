@@ -830,6 +830,7 @@ class GameDB:
             self.save_state(state)
             self.ensure_opening_ledger(state)
             self.seed_opening_crises(state)
+            self.seed_opening_gazette(state)
             return state
         metrics = {
             metric["key"]: int(metric["value"])
@@ -888,6 +889,33 @@ class GameDB:
                 """,
                 (state.turn, state.year, state.period, account, balance, balance, "期初", "登基初始账册", "内阁"),
             )
+        self.conn.commit()
+
+    def seed_opening_gazette(self, state: GameState) -> None:
+        """新档塞一份「即位前一月」邸报（turn=state.turn-1），让大臣首回合即可经 read_past_report
+        查到开局朝局速览，不必凭空臆议。已存在则不覆盖。文本来自 content/opening_gazette.md。"""
+        prev_turn = state.turn - 1
+        prev_year, prev_period = state.year, state.period - 1
+        if prev_period < 1:
+            prev_period = 12
+            prev_year -= 1
+        exists = self.conn.execute(
+            "SELECT 1 FROM turn_reports WHERE turn = ?",
+            (prev_turn,),
+        ).fetchone()
+        if exists is not None:
+            return
+        from pathlib import Path
+        gazette_path = Path(__file__).resolve().parent.parent / "content" / "opening_gazette.md"
+        if not gazette_path.is_file():
+            return
+        text = gazette_path.read_text(encoding="utf-8").strip()
+        if not text:
+            return
+        self.conn.execute(
+            "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+            (prev_turn, prev_year, prev_period, text),
+        )
         self.conn.commit()
 
     def seed_opening_crises(self, state: GameState) -> None:
@@ -1048,7 +1076,8 @@ class GameDB:
     def next_pool_portrait_id(self, prefix: str = "minister_pool_") -> str:
         """分配下一个预设头像 ID（顺序递增，不循环）。
         minister_pool: 60 个槽；consort_pool: 20 个槽。
-        超出上限后继续递增（前端 onError fallback 到占位符）。"""
+        实际可用槽位 = web/public/portraits/<prefix><N>.png 真存在的编号集合（中途删图会跳过缺号）。
+        全部用完后再回退到递增（前端 onError fallback 占位符）。"""
         rows = self.conn.execute(
             "SELECT portrait_id FROM characters WHERE portrait_id LIKE ?",
             (prefix + "%",),
@@ -1059,8 +1088,24 @@ class GameDB:
                 used.add(int(r["portrait_id"].replace(prefix, "")))
             except ValueError:
                 pass
+        # 扫真实存在的图编号
+        from pathlib import Path
+        portraits_dir = Path(__file__).resolve().parent.parent / "web" / "public" / "portraits"
+        available: set[int] = set()
+        if portraits_dir.is_dir():
+            for p in portraits_dir.glob(f"{prefix}*.png"):
+                suffix = p.stem[len(prefix):]
+                if suffix.isdigit():
+                    available.add(int(suffix))
+        free = sorted(available - used)
+        if free:
+            return f"{prefix}{free[0]}"
+        # 真实图全用完：递增分配，但跳过已知中途缺号（如手动删过的 consort_pool_14）。
+        # 编号上限：available 最大值 + 缺号集；超出后继续递增（前端 onError fallback 占位符）。
+        max_known = max(available, default=0)
+        missing = {n for n in range(1, max_known + 1) if n not in available}
         n = 1
-        while n in used:
+        while n in used or n in missing:
             n += 1
         return f"{prefix}{n}"
 
@@ -2189,13 +2234,16 @@ class GameDB:
 
     def previous_turn_summary(self, state: GameState) -> str:
         previous_turn = state.turn - 1
-        if previous_turn < 1:
+        # turn=0 是开局即位邸报（seed_opening_gazette 落库）；turn<0 才算未登基前。
+        if previous_turn < 0:
             return f"登基伊始，尚无上{TURN_UNIT}回奏。"
 
         # 上回合奏报单独存在 turn_reports，直接取。
         report = self.get_turn_report(previous_turn)
         if report:
             return report
+        if previous_turn == 0:
+            return f"登基伊始，尚无上{TURN_UNIT}回奏。"
 
         logs = self.conn.execute(
             "SELECT message FROM turn_logs WHERE turn = ? ORDER BY id",
@@ -2683,10 +2731,15 @@ class GameDB:
         row = self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
             return None
+        # 崩坏能力由 effect_on_fail 是否非空判定：有崩坏效果=会崩坏（bar 能到 0、failed 终结）；
+        # 空=不会崩坏（天灾/正面机遇等不可控或无失败态局势，bar 下限钳到 1，永不 failed，
+        # 只靠 ongoing_effects 每月持续流血）。
+        can_collapse = bool(json.loads(row["effect_on_fail"] or "{}"))
+        floor = 0 if can_collapse else 1
         # clamp single advance
         delta_bar = max(-50, min(50, int(delta_bar)))
         from_value = int(row["bar_value"])
-        to_value = max(0, min(100, from_value + delta_bar))
+        to_value = max(floor, min(100, from_value + delta_bar))
         actual_delta = to_value - from_value
         from_stage_text = row["stage_text"]
         to_stage_text = stage_text or from_stage_text
@@ -2696,7 +2749,7 @@ class GameDB:
         if to_value >= 100:
             new_status = "resolved"
             closed_turn = state.turn
-        elif to_value <= 0:
+        elif to_value <= 0 and can_collapse:
             new_status = "failed"
             closed_turn = state.turn
         # inertia 可被本次行动改变（钳到 -10..+10 五档区间）
@@ -2741,6 +2794,11 @@ class GameDB:
             raise ValueError(f"close_issue reason 非法：{reason}")
         row = self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
+            return None
+        # 不可崩坏局势（effect_on_fail 空：天灾/不可控灾害）没有「失败终结」态——LLM 误判 failed
+        # 时拒绝结案，留 active 继续靠 ongoing_effects 流血，只能靠 resolved（赈济平息）收尾。
+        if reason == "failed" and not json.loads(row["effect_on_fail"] or "{}"):
+            print(f"[INFO] close_issue 已拒：issue {issue_id}（{row['title']}）无 effect_on_fail，不可崩坏，保持 active。")
             return None
         from_value = int(row["bar_value"])
         # resolved → 抬到 100；failed → 压到 0；用于 inertia/UI 一眼看懂
