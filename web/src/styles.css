@@ -811,6 +811,12 @@ select:focus-visible {
   white-space: nowrap;
 }
 
+.budget-base-note {
+  color: rgba(87, 54, 30, 0.72);
+  font-size: 12px;
+  line-height: 1.15;
+}
+
 .budget-list {
   display: grid;
   gap: 3px;
@@ -6373,6 +6379,7 @@ button:disabled {
 
 .right-drawer-economy-summary {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 8px 16px 6px;
   font-size: 0.85rem;

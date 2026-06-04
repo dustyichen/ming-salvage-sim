@@ -166,6 +166,11 @@ REGION_FIELD_ALIASES = {
 }
 ARMY_FIELD_ALIASES = {
     **{field: field for field in ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS},
+    "id": "id",
+    "编号": "id",
+    "name": "name",
+    "名称": "name",
+    "军名": "name",
     "驻扎地": "station",
     "驻地": "station",
     "统帅": "commander",

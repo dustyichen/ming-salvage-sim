@@ -815,14 +815,67 @@ class WebGame:
     def budget_payload(self) -> Dict[str, Any]:
         # 唯一定额源：flows.compute_budget_lines（与实际落账 / 大臣 treasury_budget_summary 三处统一）。
         budget = compute_budget_lines(self.db, self.state)
+        legacy_mods = self.db.legacy_modifiers(self.state)
+
+        def _annotate_amounts(account_name: str, items: list[Dict[str, Any]]) -> None:
+            net_pct = int(legacy_mods.get(account_name, 0) or 0)
+            for item in items:
+                base_amount = int(item["amount"])
+                item["base_amount"] = base_amount
+                if item["name"] == "建筑产出":
+                    item["amount"] = sum(
+                        self.db.apply_legacy_pct(
+                            round(int(row["output_amount"]) * max(0, min(100, int(row["condition"]))) / 100),
+                            net_pct,
+                        )
+                        for row in self.db.conn.execute(
+                            "SELECT condition, output_amount FROM buildings WHERE output_metric = ?",
+                            (account_name,),
+                        ).fetchall()
+                    )
+                else:
+                    item["amount"] = self.db.apply_legacy_pct(base_amount, net_pct)
+
         budget["国库"]["balance"] = int(self.state.metrics["国库"])
         budget["内库"]["balance"] = int(self.state.metrics["内库"])
-        for account in (budget["国库"], budget["内库"]):
+        for account_name, account in budget.items():
+            _annotate_amounts(str(account_name), account["income"])
+            net_pct = int(legacy_mods.get(str(account_name), 0) or 0)
+            for item in account["expense"]:
+                base_amount = int(item["amount"])
+                item["base_amount"] = base_amount
+                if item["name"] == "各军军饷":
+                    item["amount"] = sum(
+                        abs(self.db.apply_legacy_pct(-int(row["maintenance_per_turn"]), net_pct))
+                        for row in self.db.conn.execute(
+                            "SELECT maintenance_per_turn FROM armies WHERE owner_power='ming' AND maintenance_per_turn>0"
+                        ).fetchall()
+                    )
+                elif item["name"] == "建筑维护":
+                    item["amount"] = sum(
+                        abs(self.db.apply_legacy_pct(-int(row["maintenance"]), net_pct))
+                        for row in self.db.conn.execute(
+                            """
+                            SELECT maintenance FROM buildings
+                            WHERE maintenance > 0
+                              AND CASE WHEN category='内廷' THEN '内库' ELSE '国库' END = ?
+                            """,
+                            (str(account_name),),
+                        ).fetchall()
+                    )
+                else:
+                    item["amount"] = abs(self.db.apply_legacy_pct(-base_amount, net_pct))
             income_total = sum(int(item["amount"]) for item in account["income"])
             expense_total = sum(int(item["amount"]) for item in account["expense"])
+            base_income_total = sum(int(item["base_amount"]) for item in account["income"])
+            base_expense_total = sum(int(item["base_amount"]) for item in account["expense"])
             account["income_total"] = income_total
             account["expense_total"] = expense_total
             account["net"] = income_total - expense_total
+            account["base_income_total"] = base_income_total
+            account["base_expense_total"] = base_expense_total
+            account["base_net"] = base_income_total - base_expense_total
+            account["modifier_pct"] = int(legacy_mods.get(str(account_name), 0) or 0)
         # 本月入账（上月末结算）：上月末 LLM 推演 + 固定财政 tick 落的 ledger
         # 时序上 state.turn 在结算末尾 +1 进入新月，所以"本月可见的入账"是 cur_turn - 1 的 ledger。
         # 语义对齐玩家直觉："上月末抄家/清丈的钱，算这个月的收入"。

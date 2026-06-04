@@ -553,8 +553,8 @@ def build_board_query_tools(context: CourtContext):
         return context.db.army_report(limit=8)
 
     def inspect_army(army: str) -> str:
-        """查某支军队详细数值：supply/morale/training/equipment/arrears/mobility/loyalty/
-        manpower/maintenance_per_turn/station/commander/controller/troop_type/status。
+        """查某支军队详细数值：补给/士气/训练/装备/欠饷/机动/忠诚/
+        人数/维护费/驻地/统帅/主管/兵种/状态。
         army 可传军队名（如"关宁军"）或 army_id（如"guanning"），两者均支持。"""
         try:
             return context.db.army_detail(army)
@@ -745,11 +745,11 @@ def build_extractor_tools(context: CourtContext):
                             合法字段：public_support/unrest/grain_security/gentry_resistance/
                             military_pressure/corruption/population/registered_land/
                             hidden_land/tax_per_turn/natural_disaster/human_disaster/status
-                            减人口写population，禁止写manpower（军队字段）
-        army_delta          军队数值变化 {army_id: {字段:增量}}
-                            合法字段：supply/morale/training/equipment/arrears/mobility/loyalty/
-                            manpower/maintenance_quarter/station/commander/controller/troop_type/status
-                            禁止写cohesion（势力字段）
+                            减人口写人口，禁止写军队人数
+        army_delta          军队变化 {army_id: {field:delta_or_new}}
+                            field 用短键：supply/morale/training/equipment/mobility/loyalty/
+                            manpower/maintenance_per_turn/station/commander/troop_type/status/owner_power
+                            owner_power 值可写中文势力名；禁止写 arrears/cohesion
         power_updates       别的势力三项简单属性 {power_id: {"威望":N,"实力":N,"经济":N}}
                             只写非大明势力；三项均为整数增量；不写立场/近动/状态
         world_advance       外交态度 KV；key 为势力名或 power_id，value 为简短态度字符串
@@ -782,8 +782,8 @@ def build_extractor_tools(context: CourtContext):
         appointments        仅后宫纳妃 [{name,office,office_type:"后宫",reason,approved}]
                             decree_text明文"纳/册封/封/选 某某 为 位号"才立；朝臣一律不进此字段
         character_status_changes  大臣状态变更 [{name,status,reason}]
-                            status∈dismissed/imprisoned/exiled/retired/dead/offstage
-                            邸报明文写到此人此事才立；既已dismissed/dead的不重复
+                            status 直接写中文：罢黜/下狱/流放/致仕/身故/离场
+                            邸报明文写到此人此事才立；既已罢黜/身故的不重复
         office_changes      朝臣官职变更 [{name,new_office,reason,可选faction/new_office_type}]
                             任何人任某官（新进朝堂/调任/升迁）一律走此字段，不分新旧任
                             new_office必须是明制实官名；去职走character_status_changes
@@ -805,7 +805,7 @@ def build_extractor_tools(context: CourtContext):
           "faction_delta": {"阉党": -5, "东林": 4},
           "class_delta": {"农民@shaanxi": {"satisfaction": -6, "leverage": 5}},
           "region_delta": {"shaanxi": {"unrest": 5, "grain_security": -3}},
-          "army_delta": {"guanning": {"morale": -3, "arrears": 5}},
+          "army_delta": {"guanning": {"morale": -3, "loyalty": -2}},
           "power_updates": {"houjin": {"威望": -4, "实力": -3, "经济": -2}},
           "world_advance": {"后金": "敌对", "蒙古": "摇摆", "朝鲜": "倾明"},
           "issue_advances": [{"issue_id":12,"delta_bar":15,"stage_text":"户部主事至苏州","narrative":"..."}],
@@ -814,7 +814,7 @@ def build_extractor_tools(context: CourtContext):
           "close_issues": [{"issue_id":9,"reason":"resolved","narrative":"..."}],
           "fiscal_changes": [],
           "appointments": [],
-          "character_status_changes": [{"name":"魏忠贤","status":"exiled","reason":"发配凤阳"}],
+          "character_status_changes": [{"name":"魏忠贤","status":"流放","reason":"发配凤阳"}],
           "office_changes": [{"name":"孙传庭","new_office":"陕西总督","new_office_type":"督抚","reason":"永城知县擢用"}]
         }
         """

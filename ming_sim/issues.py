@@ -47,6 +47,66 @@ def _ctx() -> GameContent:
     return _content
 
 
+_CHARACTER_STATUS_ALIASES = {
+    "dismissed": "dismissed",
+    "已罢黜": "dismissed",
+    "罢黜": "dismissed",
+    "罢官": "dismissed",
+    "革职": "dismissed",
+    "革去": "dismissed",
+    "免职": "dismissed",
+    "削职": "dismissed",
+    "去职": "dismissed",
+    "imprisoned": "imprisoned",
+    "已下狱": "imprisoned",
+    "下狱": "imprisoned",
+    "入狱": "imprisoned",
+    "收监": "imprisoned",
+    "系狱": "imprisoned",
+    "囚禁": "imprisoned",
+    "exiled": "exiled",
+    "已流放": "exiled",
+    "流放": "exiled",
+    "发配": "exiled",
+    "充军": "exiled",
+    "谪戍": "exiled",
+    "retired": "retired",
+    "已致仕": "retired",
+    "致仕": "retired",
+    "告老": "retired",
+    "乞休": "retired",
+    "勒令致仕": "retired",
+    "归里": "retired",
+    "dead": "dead",
+    "死亡": "dead",
+    "身故": "dead",
+    "身死": "dead",
+    "已故": "dead",
+    "病故": "dead",
+    "卒": "dead",
+    "死": "dead",
+    "处死": "dead",
+    "赐死": "dead",
+    "斩首": "dead",
+    "offstage": "offstage",
+    "离场": "offstage",
+    "不再登场": "offstage",
+    "退场": "offstage",
+    "隐退": "offstage",
+}
+
+
+def _normalize_character_status(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    key = raw.lower()
+    if key in _CHARACTER_STATUS_ALIASES:
+        return _CHARACTER_STATUS_ALIASES[key]
+    compact = re.sub(r"[\s　`'\"“”‘’、/／|，,。；;：:（）()【】\[\]{}<>《》-]+", "", raw)
+    return _CHARACTER_STATUS_ALIASES.get(compact, "")
+
+
 def _apply_issue_buildings(
     db: GameDB,
     state: GameState,
@@ -1318,17 +1378,17 @@ def apply_score_extraction(
 
     # 9) character_status_changes：LLM 判定的既有大臣去向（罢/狱/流/致仕/死）
     applied_status_changes: List[Dict[str, object]] = []
-    valid_status = {"dismissed", "imprisoned", "exiled", "retired", "dead", "offstage"}
     for item in extracted.get("character_status_changes") or []:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or "").strip()
-        status = str(item.get("status") or "").strip().lower()
+        raw_status = str(item.get("status") or "").strip()
+        status = _normalize_character_status(raw_status)
         reason = str(item.get("reason") or "").strip()
-        if not name or status not in valid_status:
+        if not name or not status:
             applied_status_changes.append({
-                "name": name, "status": status, "rejected": True,
-                "reason": "name 空 或 status 非白名单",
+                "name": name, "status": raw_status, "rejected": True,
+                "reason": "name 空 或 status 非白名单（可写罢黜/下狱/流放/致仕/身故/离场）",
             })
             continue
         if content is not None and name not in content.characters:

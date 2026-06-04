@@ -10,11 +10,11 @@ export const scoreTone = (value: number, inverse = false) => {
   return "good";
 };
 
-export const formatMoney = (value: number) => `${value}万两`;
+export const formatMoney = (value: number) => value < 0 ? `欠${Math.abs(value)}万两` : `${value}万两`;
 
-export const formatSignedMoney = (value: number) => `${value > 0 ? "+" : ""}${formatMoney(value)}`;
+export const formatSignedMoney = (value: number) => value < 0 ? `-${Math.abs(value)}万两` : `${value > 0 ? "+" : ""}${formatMoney(value)}`;
 
-export const monthlyAmount = (value: number) => Math.max(0, Math.round(value / 3));
+export const monthlyAmount = (value: number) => Math.max(0, Math.round(value));
 
 export const issueTone = (value: number) => {
   if (value <= 28) return "danger";

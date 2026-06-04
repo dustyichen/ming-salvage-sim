@@ -89,7 +89,7 @@
 {"name": "袁崇焕", "status": "imprisoned", "reason": "擅杀毛文龙"}
 ```
 
-**合法 status 值**：`dismissed` / `imprisoned` / `exiled` / `retired` / `dead` / `offstage`
+**合法 status 值**：提取器可按诏书中文直接写罢黜 / 下狱 / 流放 / 致仕 / 身故 / 离场或不再登场；程序落库时分别转成 `dismissed` / `imprisoned` / `exiled` / `retired` / `dead` / `offstage`
 
 **落地**：`db.set_character_status()` → `issues.py:850`
 

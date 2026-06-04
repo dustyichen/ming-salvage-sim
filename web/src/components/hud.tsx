@@ -511,6 +511,8 @@ export function BudgetHover({ accountName, budget }: { accountName: "国库" | "
   const [open, setOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const [pos, setPos] = React.useState<{ left: number; top: number } | null>(null);
+  const modifierPct = budget.modifier_pct || 0;
+  const hasModifier = modifierPct !== 0 && budget.base_net !== undefined;
   const show = () => {
     const r = triggerRef.current?.getBoundingClientRect();
     if (r) setPos({ left: r.left, top: r.bottom + 6 });
@@ -545,6 +547,11 @@ export function BudgetHover({ accountName, budget }: { accountName: "国库" | "
               <span><small>出</small><strong className="expense">{formatMoney(budget.expense_total)}</strong></span>
               <span><small>净</small><strong className={budget.net >= 0 ? "income" : "expense"}>{formatSignedMoney(budget.net)}</strong></span>
             </span>
+            {hasModifier && (
+              <span className="budget-base-note">
+                基准 {formatSignedMoney(budget.base_net || 0)}，修正 {modifierPct > 0 ? "+" : ""}{modifierPct}%
+              </span>
+            )}
           </span>
           <BudgetList title="固定收入" items={budget.income} />
           <BudgetList title="固定支出" items={budget.expense} expense />

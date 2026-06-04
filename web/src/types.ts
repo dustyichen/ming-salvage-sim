@@ -208,6 +208,7 @@ export type ClosedIssue = {
 export type BudgetItem = {
   name: string;
   amount: number;
+  base_amount?: number;
   note: string;
 };
 
@@ -225,6 +226,10 @@ export type BudgetAccount = {
   income_total: number;
   expense_total: number;
   net: number;
+  base_income_total?: number;
+  base_expense_total?: number;
+  base_net?: number;
+  modifier_pct?: number;
   movements: BudgetMovement[];
   movements_total: number;
 };

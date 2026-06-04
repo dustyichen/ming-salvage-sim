@@ -81,6 +81,29 @@ def infer_office_type_from_office(office: str, current_type: str = "") -> str:
     return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
 
 
+def _compact_lookup_text(value: str) -> str:
+    return re.sub(r"[\s　`'\"“”‘’、/／|，,。；;：:（）()【】\[\]{}<>《》-]+", "", str(value or "")).lower()
+
+
+def _normalize_power_id(conn: sqlite3.Connection, value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    rows = conn.execute("SELECT id, name, aliases FROM powers").fetchall()
+    ids = {str(r["id"]) for r in rows}
+    if raw in ids:
+        return raw
+    wanted = _compact_lookup_text(raw)
+    for row in rows:
+        candidates = [str(row["id"]), str(row["name"] or "")]
+        aliases = str(row["aliases"] or "")
+        candidates.extend(x.strip() for x in re.split(r"[,，、/／|]", aliases) if x.strip())
+        for candidate in candidates:
+            if _compact_lookup_text(candidate) == wanted:
+                return str(row["id"])
+    return raw
+
+
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None):
         self.path = path
@@ -834,10 +857,85 @@ class GameDB:
                 [_meta(rec) for rec in rows],
             )
 
+        json_by_key = {str(rec["key"]): rec for rec in rows}
+
+        def _refresh_fiscal_metadata() -> None:
+            """补齐 fiscal_config 的预算目录元数据；不改玩家调过的 value。"""
+            self.conn.executemany(
+                "UPDATE fiscal_config SET note = ?, budget_role = ?, account = ?, "
+                "direction = ?, display = ?, sort_order = ? WHERE key = ?",
+                [
+                    (
+                        str(rec["note"]),
+                        str(rec.get("budget_role", "fixed")),
+                        str(rec.get("account", "")),
+                        str(rec.get("direction", "")),
+                        str(rec.get("display", "")),
+                        int(rec.get("order", 9999)),
+                        str(rec["key"]),
+                    )
+                    for rec in rows
+                ],
+            )
+
+        def _migrate_fiscal_v6_monthly() -> None:
+            """v5 及以前 fiscal_config 的 *_base 是季度额；v6 起统一改为月额。"""
+            for rec in rows:
+                key = str(rec["key"])
+                if str(rec.get("kind")) != "base":
+                    continue
+                row = self.conn.execute(
+                    "SELECT value FROM fiscal_config WHERE key = ?", (key,)
+                ).fetchone()
+                if row is None:
+                    continue
+                old_value = int(row["value"])
+                new_value = max(0, (old_value + 1) // 3)
+                self.conn.execute(
+                    "UPDATE fiscal_config SET value = ? WHERE key = ?",
+                    (new_value, key),
+                )
+            _seed_missing()
+            _refresh_fiscal_metadata()
+
+        def _migrate_fiscal_v7_defaults() -> None:
+            """v7 月额校准：仅把仍等于 v6 折月默认值的科目推进到当前默认。"""
+            v6_defaults = {
+                "辽饷_base": 44,
+                "盐税_base": 24,
+                "商税_base": 8,
+                "皇庄_base": 20,
+                "矿税_base": 4,
+                "织造_base": 12,
+                "宗室禄米_base": 120,
+                "官俸_base": 25,
+                "工程_base": 5,
+                "赈灾_base": 5,
+                "宫廷_base": 8,
+                "内廷俸_base": 5,
+                "妃嫔_base": 4,
+            }
+            _seed_missing()
+            for key, old_default in v6_defaults.items():
+                rec = json_by_key.get(key)
+                if rec is None:
+                    continue
+                row = self.conn.execute(
+                    "SELECT value FROM fiscal_config WHERE key = ?", (key,)
+                ).fetchone()
+                if row is not None and int(row["value"]) == old_default:
+                    self.conn.execute(
+                        "UPDATE fiscal_config SET value = ? WHERE key = ?",
+                        (int(rec["value"]), key),
+                    )
+            _refresh_fiscal_metadata()
+
         # 每版迁移：从 N-1 → N，只动那版真正变的东西。键＝目标版本号 N。
         # 不在表里的版本步走默认 _seed_missing（只补缺 key）。将来要改某 key 默认 / 删某 key /
         # 加新 key，就在这里登记一条 lambda，只动那一项，别动其它——这样玩家改过的全保住。
         _FISCAL_MIGRATIONS: "Dict[int, Any]" = {
+            6: _migrate_fiscal_v6_monthly,
+            7: _migrate_fiscal_v7_defaults,
             # 8: lambda: self._add_fiscal_key("关税_base", ...),   # 例：将来加新税
         }
 
@@ -850,11 +948,17 @@ class GameDB:
             return  # 已最新，玩家状态神圣，碰都不碰
 
         if cur_ver == 0:
-            # 全新库：整体 seed 一次。
-            self.conn.executemany(
-                f"INSERT INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [_meta(rec) for rec in rows],
-            )
+            existing_count = self.conn.execute("SELECT COUNT(*) FROM fiscal_config").fetchone()[0]
+            if existing_count:
+                # 更早的旧档没有 __schema_version，但已有季度额 key；当作 v5 逐版迁移。
+                for v in range(6, schema_version + 1):
+                    (_FISCAL_MIGRATIONS.get(v) or _seed_missing)()
+            else:
+                # 全新库：整体 seed 一次。
+                self.conn.executemany(
+                    f"INSERT INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [_meta(rec) for rec in rows],
+                )
         else:
             # 老档升版：逐版跑差量；未登记的版本步只补缺 key。
             for v in range(cur_ver + 1, schema_version + 1):
@@ -1537,7 +1641,7 @@ class GameDB:
             if not isinstance(raw, dict):
                 continue
             name = str(raw.get("name") or raw.get("姓名") or "").strip()
-            new_power = str(raw.get("new_power") or raw.get("新势力") or "").strip()
+            new_power = _normalize_power_id(self.conn, raw.get("new_power") or raw.get("新势力") or raw.get("归属") or "")
             reason = str(raw.get("reason") or raw.get("原因") or "")[:120]
             if not name or not new_power:
                 print(f"[WARN] character_power_changes 缺 name/new_power → 跳过: {raw}")
@@ -2796,6 +2900,12 @@ class GameDB:
                     log_delta = actual_delta
                 elif field in ARMY_TEXT_FIELDS:
                     text_value = str(value).strip()[:160]
+                    if field == "owner_power":
+                        text_value = _normalize_power_id(self.conn, text_value)
+                        valid_powers = {r["id"] for r in self.conn.execute("SELECT id FROM powers").fetchall()}
+                        if text_value not in valid_powers:
+                            print(f"[WARN] army_delta 归属 '{value}' 未在 powers → 跳过")
+                            continue
                     if not text_value or text_value == str(old_value):
                         continue
                     stored_new = text_value
@@ -2862,7 +2972,7 @@ class GameDB:
             if not aid:
                 print(f"[WARN] new_armies 缺 id → 跳过: {raw}")
                 continue
-            owner = str(item.get("owner_power") or "ming").strip() or "ming"
+            owner = _normalize_power_id(self.conn, item.get("owner_power") or "ming") or "ming"
             if owner not in valid_powers:
                 print(f"[WARN] new_armies owner_power '{owner}' 未在 powers → 跳过 {aid}")
                 continue
@@ -5095,7 +5205,7 @@ class GameDB:
             if net_pct:
                 delta = self.apply_legacy_pct(int(delta), net_pct)
         before = int(state.metrics[account])
-        after = max(0, before + int(delta))
+        after = before + int(delta)
         actual = after - before
         if actual == 0:
             return 0

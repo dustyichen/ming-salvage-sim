@@ -129,7 +129,17 @@ def main() -> int:
         print(f"[evt] {kind}: {str(data)[:200]}")
 
     print("[resolve] 开始结算 ...")
-    report = session.resolve_turn(decree=args.decree, on_event=on_event, cheat_directive=args.cheat)
+    result = session.resolve_turn(decree=args.decree, on_event=on_event, cheat_directive=args.cheat)
+    if getattr(result, "awaiting", False):
+        # HITL 决策点：probe 自动取每个决策的首选项续跑 phase2。
+        print(f"[resolve] 出 {len(result.decisions)} 个决策点，自动取首选续跑。")
+        choices = []
+        for d in result.decisions:
+            opts = d.get("options") or []
+            choices.append(dict(opts[0]) if opts else {})
+        report = session.submit_decisions(choices, on_event=on_event)
+    else:
+        report = result.report
     print(f"[resolve] 完成。Report 字符数={len(report)}")
     print("---- REPORT 头 300 ----")
     print(report[:300])

@@ -18,7 +18,7 @@
       "韩爌",
       "王承恩"
     ],
-    "resolve_condition": "月度财政转正——国库每月税收入足以覆盖宗禄+官俸+辽饷+京营各军军饷等刚性月支、不再月月赤字挪借即可结案；无论靠裁冗节流、开源加征、清丈盐课商税还是抄没新财源，只要月入≥月支、收支转正即视为达成",
+    "resolve_condition": "国库回合收入为正，每月进度+10",
     "fail_condition": "国库见底致刚性支出违约——欠饷哗变、官俸断发或宗禄拖欠激成宗藩闹事",
     "trigger_gate": {},
     "auto_trigger": true,
@@ -77,7 +77,7 @@
       "孙承宗",
       "毕自严"
     ],
-    "resolve_condition": "关宁军欠饷补齐过半、军心稳住不再鼓噪即可结案；不要求宁锦整训全部完成或主帅到任，只要哗变之危解除、防线暂稳即视为达成",
+    "resolve_condition": "关宁军欠饷 <= 34 万两，且士气 >= 55、补给 >= 55、忠诚 >= 55，连续 2 个月未发生鼓噪哗变，宁远/锦州仍由大明控制即可结案。",
     "fail_condition": "关宁军欠饷激成兵变或将领私下勾结后金；宁锦防线丢失锦州/宁远任一要隘",
     "trigger_gate": {},
     "auto_trigger": true,
@@ -170,8 +170,8 @@
       "毕自严",
       "徐光启"
     ],
-    "resolve_condition": "陕西 public_support（地方民心）>60 且 unrest（动乱值）<30，且驻陕官军/边军已能压制叛军（流寇被剿散、就抚或赶出陕西，不再成股攻州县）即可结案",
-    "fail_condition": "陕西流寇成股（万人以上）攻破州县；与晋豫流寇合流；驿卒大批投寇",
+    "resolve_condition": "陕西地方民心 >= 60、动乱值 <= 30、粮食安全 >= 45，且驻陕明军士气 >= 50；连续 2 个月无成股流寇攻州县即可结案。",
+    "fail_condition": "陕西动乱值 >= 85 且地方民心 <= 30，或粮食安全 <= 20；若万人以上流寇攻破州县、与晋豫流寇合流、驿卒大批投寇任一发生，立即失败。",
     "trigger_gate": {},
     "auto_trigger": true,
     "bar_value": 30,
@@ -318,6 +318,208 @@
       "region.shaanxi|shanxi|henan.unrest.min": ">=65"
     },
     "auto_trigger": true
+  },
+  {
+    "id": "treasury_overdraft",
+    "title": "太仓透支",
+    "kind": "财政",
+    "summary": "太仓银数已成负账，户部以借垫、截留和拖欠硬撑本月支出。",
+    "urgency": 76,
+    "severity": 64,
+    "credibility": 82,
+    "interests": [
+      "户部",
+      "边镇",
+      "官僚",
+      "宗藩"
+    ],
+    "audiences": [
+      "毕自严",
+      "王承恩",
+      "韩爌"
+    ],
+    "resolve_condition": "国库余额回正，且月度定额不再赤字；补上当月官俸与关键军饷缺口",
+    "fail_condition": "国库继续透支至三百万两以上，户部票拟无人认账，军饷官俸大面积拖欠",
+    "trigger_gate": {
+      "国库": "<=-100"
+    },
+    "auto_trigger": true,
+    "bar_value": 35,
+    "bar_good_meaning": "信用稍复",
+    "bar_bad_meaning": "借垫失控",
+    "inertia": -5,
+    "stage_text": "户部报：太仓已入负账，只能以借垫、截留和拖欠周转。",
+    "tags": [
+      "财政",
+      "国库",
+      "信用"
+    ],
+    "ongoing_effects": {
+      "metrics": {
+        "皇威": -1
+      },
+      "economy": [
+        {
+          "account": "国库",
+          "delta": -8,
+          "category": "借垫利耗",
+          "reason": "太仓透支后借垫火耗与催索成本增加"
+        }
+      ]
+    },
+    "effect_on_resolve": {
+      "metrics": {
+        "皇威": 3
+      }
+    },
+    "effect_on_fail": {
+      "metrics": {
+        "皇威": -6,
+        "民心": -2
+      }
+    }
+  },
+  {
+    "id": "treasury_debt_spiral",
+    "title": "国债滚积",
+    "kind": "财政",
+    "summary": "国库负债滚至数百万两，商贾不愿承兑，地方藩库与边镇互相推诿。",
+    "urgency": 86,
+    "severity": 78,
+    "credibility": 84,
+    "interests": [
+      "户部",
+      "商人",
+      "边镇",
+      "地方官"
+    ],
+    "audiences": [
+      "毕自严",
+      "王承恩",
+      "韩爌"
+    ],
+    "resolve_condition": "国库负债压回一百万两以内，并建立稳定新财源或裁撤刚性月支",
+    "fail_condition": "国库负债继续扩大至六百万两以上，京营、关宁、宗藩三面同时断支",
+    "trigger_gate": {
+      "国库": "<=-300"
+    },
+    "auto_trigger": true,
+    "bar_value": 28,
+    "bar_good_meaning": "债务收束",
+    "bar_bad_meaning": "债滚成灾",
+    "inertia": -7,
+    "stage_text": "户部票据折价，商贾不愿承兑，地方藩库与边镇互相推诿。",
+    "tags": [
+      "财政",
+      "国库",
+      "债务"
+    ],
+    "ongoing_effects": {
+      "metrics": {
+        "皇威": -1,
+        "民心": -1
+      },
+      "economy": [
+        {
+          "account": "国库",
+          "delta": -15,
+          "category": "债务滚息",
+          "reason": "国库负债滚积，贴息与折价损耗扩大"
+        }
+      ]
+    },
+    "effect_on_resolve": {
+      "metrics": {
+        "皇威": 4,
+        "民心": 2
+      }
+    },
+    "effect_on_fail": {
+      "metrics": {
+        "皇威": -10,
+        "民心": -4
+      },
+      "economy": [
+        {
+          "account": "国库",
+          "delta": -60,
+          "category": "信用崩坏",
+          "reason": "折价借银与追索旧欠形成额外亏空"
+        }
+      ]
+    }
+  },
+  {
+    "id": "treasury_credit_collapse",
+    "title": "太仓信用崩裂",
+    "kind": "财政",
+    "summary": "太仓负债深重，户部文移出京即折价，官俸军饷与赈济票据无人愿收。",
+    "urgency": 96,
+    "severity": 90,
+    "credibility": 88,
+    "interests": [
+      "户部",
+      "边镇",
+      "官僚",
+      "百姓",
+      "商人"
+    ],
+    "audiences": [
+      "毕自严",
+      "王承恩",
+      "孙承宗",
+      "韩爌"
+    ],
+    "resolve_condition": "国库负债压回三百万两以内，并用抄没、清丈、开源或裁支给出明确偿付路径",
+    "fail_condition": "负债继续扩大、关键军镇哗变或京官罢值，朝廷财政信用实质破产",
+    "trigger_gate": {
+      "国库": "<=-600"
+    },
+    "auto_trigger": true,
+    "bar_value": 20,
+    "bar_good_meaning": "信用续命",
+    "bar_bad_meaning": "财政破产",
+    "inertia": -10,
+    "stage_text": "户部文移出京即折价，官俸军饷与赈济票据无人愿收。",
+    "tags": [
+      "财政",
+      "国库",
+      "破产"
+    ],
+    "ongoing_effects": {
+      "metrics": {
+        "皇威": -2,
+        "民心": -2
+      },
+      "economy": [
+        {
+          "account": "国库",
+          "delta": -25,
+          "category": "信用崩裂",
+          "reason": "太仓信用崩裂，票据折价、催索和军饷延误滚成新亏"
+        }
+      ]
+    },
+    "effect_on_resolve": {
+      "metrics": {
+        "皇威": 6,
+        "民心": 3
+      }
+    },
+    "effect_on_fail": {
+      "metrics": {
+        "皇威": -15,
+        "民心": -8
+      },
+      "economy": [
+        {
+          "account": "国库",
+          "delta": -100,
+          "category": "财政破产",
+          "reason": "太仓信用破产后的强制善后与补偿"
+        }
+      ]
+    }
   },
   {
     "id": "jiangnan_gentry_revolt",
