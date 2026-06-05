@@ -361,21 +361,11 @@ export type ChatResponse = {
   suggestions: Suggestion[];
   directives: Directive[];
   pending_count?: number;
-  can_undo_last_chat?: boolean;
   court_action?: string;
   next_minister?: string;
   registered_minister?: string;
   proposed_directive?: ProposedDirective | null;
   secret_order_id?: number;
-};
-
-export type ChatUndoResponse = {
-  history: ChatMessage[];
-  suggestions: Suggestion[];
-  directives: Directive[];
-  pending_count: number;
-  secret_orders: SecretOrder[];
-  can_undo_last_chat: boolean;
 };
 
 export type ApiErrorDetail = {

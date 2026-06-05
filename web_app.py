@@ -1002,71 +1002,12 @@ class WebGame:
             return f"minister-{minister_name}-turn-{self.state.turn}"
         return registry.session_ids.get(minister_name, f"minister-{minister_name}-turn-{self.state.turn}")
 
-    def can_undo_last_chat(self, minister_name: str) -> bool:
-        if not self._persistent_chat_minister(minister_name):
-            return False
-        if self.state.turn_phase not in ("summoning", "reviewing"):
-            return False
-        return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
-
-    def _start_chat_turn(self, minister_name: str) -> tuple[int, Dict[str, Any]]:
-        agno_session_id = self._minister_agno_session_id(minister_name)
-        runs_before = self.db.agno_runs_length(agno_session_id)
-        snapshot = self.db.capture_chat_rollback_snapshot()
-        chat_turn_id = self.db.create_chat_turn(
-            self.state,
-            minister_name,
-            agno_session_id,
-            runs_before,
-        )
-        return chat_turn_id, snapshot
-
-    def _record_chat_rollback_items(
-        self,
-        chat_turn_id: int,
-        before_snapshot: Dict[str, Any],
-    ) -> None:
-        if not chat_turn_id:
-            return
-        after_snapshot = self.db.capture_chat_rollback_snapshot()
-        self.db.record_chat_turn_rollback_diffs(chat_turn_id, before_snapshot, after_snapshot)
-
-    def undo_last_chat(self, minister_name: str) -> Dict[str, Any]:
-        if self.state.turn_phase not in ("summoning", "reviewing"):
-            raise HTTPException(status_code=409, detail="本回合已经进入颁诏结算，不能撤回召对。")
-        if not self._persistent_chat_minister(minister_name):
-            raise HTTPException(status_code=409, detail="临时召见人物暂不支持撤回。")
-        row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
-        if row is None:
-            raise HTTPException(status_code=404, detail="本回合没有可撤回的召对。")
-        if not self.db.is_global_last_active_chat_turn(int(row["id"])):
-            raise HTTPException(status_code=409, detail="只能撤回全局最后一轮召对。")
-        if not row.get("user_message_id") or not row.get("minister_message_id"):
-            raise HTTPException(status_code=409, detail="该召对尚未完整完成，不能撤回。")
-        try:
-            undone = self.db.undo_chat_turn(int(row["id"]))
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from None
-        self.session.refresh_runtime_after_chat_rollback()
-        self.chat_history = {name: [] for name in self.session.content.characters}
-        for name, msgs in self.db.load_all_chat_history().items():
-            self.chat_history.setdefault(name, []).extend(msgs)
-        character = self.session._character(minister_name)
-        return {
-            "minister": minister_name,
-            "undone_chat_turn_id": int(undone["id"]),
-            "history": self.chat_history.get(minister_name, []),
-            "directives": [self.directive_payload(row) for row in self.directive_rows()],
-            "pending_count": self.session.pending_count(),
-            "secret_orders": self.db.list_secret_orders(),
-            "suggestions": self.suggestions_for(character),
-            "can_undo_last_chat": self.can_undo_last_chat(minister_name),
-        }
 
     def _chat_payload(
         self,
         minister_name: str,
         answer: str,
+        user_text: str = "",
         court_action: str = "",
         next_minister: str = "",
         proposed_directive: Optional[Dict[str, Any]] = None,
@@ -1076,14 +1017,16 @@ class WebGame:
         secret_order_id: int = 0,
         tax_issue_id: int = 0,
         tax_adjusted: str = "",
-        chat_turn_id: int = 0,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
-        self.chat_history[minister_name].append({"role": "minister", "content": answer})
+        # 召对答完，整轮一起落库（user+minister）+ 进内存缓存。中途退出走不到这里 → 不落库。
+        if user_text:
+            self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": user_text})
+        self.chat_history.setdefault(minister_name, []).append({"role": "minister", "content": answer})
         if minister_name not in self.session.temporary_characters:
-            message_id = self.db.append_chat_message(minister_name, self.state.turn, "minister", answer)
-            if chat_turn_id:
-                self.db.update_chat_turn_messages(chat_turn_id, minister_message_id=message_id)
+            if user_text:
+                self.db.append_chat_message(minister_name, self.state.turn, "user", user_text)
+            self.db.append_chat_message(minister_name, self.state.turn, "minister", answer)
         return {
             "minister": minister_name,
             "answer": answer,
@@ -1100,7 +1043,6 @@ class WebGame:
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "suggestions": self.suggestions_for(character),
-            "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
 
     def chat(self, minister_name: str, message: str) -> Dict[str, Any]:
@@ -1109,28 +1051,14 @@ class WebGame:
         text = message.strip()
         if not text:
             raise HTTPException(status_code=400, detail="问话不能为空。")
-        chat_turn_id = 0
-        before_snapshot: Dict[str, Any] = {}
-        if self._persistent_chat_minister(minister_name):
-            chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
-        self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-        if minister_name not in self.session.temporary_characters:
-            message_id = self.db.append_chat_message(minister_name, self.state.turn, "user", text)
-            if chat_turn_id:
-                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
-        try:
-            result = self.session.chat(minister_name, text)
-            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        except Exception:
-            if chat_turn_id:
-                self.db.mark_chat_turn_failed(chat_turn_id)
-            raise
+        # 召对答完才落库（user+minister 一起，见 _chat_payload）；中途退出/异常整轮不落库。
+        result = self.session.chat(minister_name, text)
         proposed = None
         if result.proposed_directive is not None:
             d = result.proposed_directive
             proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
         return self._chat_payload(
-            minister_name, result.answer,
+            minister_name, result.answer, user_text=text,
             court_action=result.court_action, next_minister=result.next_minister,
             proposed_directive=proposed, appointed_minister=result.appointed_minister,
             registered_minister=result.registered_minister,
@@ -1138,7 +1066,6 @@ class WebGame:
             secret_order_id=result.secret_order_id,
             tax_issue_id=result.tax_issue_id,
             tax_adjusted=result.tax_adjusted,
-            chat_turn_id=chat_turn_id,
         )
 
     def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
@@ -1149,15 +1076,7 @@ class WebGame:
         if not text:
             yield {"type": "error", "message": "问话不能为空。"}
             return
-        chat_turn_id = 0
-        before_snapshot: Dict[str, Any] = {}
-        if self._persistent_chat_minister(minister_name):
-            chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
-        self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-        if minister_name not in self.session.temporary_characters:
-            message_id = self.db.append_chat_message(minister_name, self.state.turn, "user", text)
-            if chat_turn_id:
-                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+        # 召对答完才落库（_chat_payload 整轮一起写）；流式中途退出＝前端中断，整轮不落库。
         character = self.session._character(minister_name)
         chunks: List[str] = []
         try:
@@ -1261,21 +1180,18 @@ class WebGame:
                             payload_json = json.dumps(args, ensure_ascii=False)
                         tax_issue_id, tax_adjusted = self.session._apply_tax_adjust_issue(payload_json, character)
                     # 密令结案不再走大臣工具，由月末推演 + extractor 写入
-            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             payload = self._chat_payload(
-                minister_name, answer, court_action=court_action, next_minister=next_minister,
+                minister_name, answer, user_text=text,
+                court_action=court_action, next_minister=next_minister,
                 proposed_directive=proposed, appointed_minister=appointed,
                 registered_minister=registered,
                 displaced_minister=displaced,
                 secret_order_id=secret_order_id,
                 tax_issue_id=tax_issue_id,
                 tax_adjusted=tax_adjusted,
-                chat_turn_id=chat_turn_id,
             )
             yield {"type": "done", "payload": payload}
         except Exception as error:
-            if chat_turn_id:
-                self.db.mark_chat_turn_failed(chat_turn_id)
             if isinstance(error, LLMUnavailable):
                 yield {"type": "error", "detail": _llm_error_detail(error)}
             else:
@@ -1790,7 +1706,6 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
         "minister": get_game().public_character(character),
         "history": get_game().chat_history.get(minister_name, []),
         "suggestions": get_game().suggestions_for(character),
-        "can_undo_last_chat": get_game().can_undo_last_chat(minister_name),
     }
 
 
@@ -1821,11 +1736,6 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
 async def api_chat(minister_name: str, request: ChatRequest) -> Dict[str, Any]:
     _require_active_minister(minister_name)
     return get_game().chat(minister_name, request.message)
-
-
-@app.post("/api/ministers/{minister_name}/chat/undo")
-async def api_undo_chat(minister_name: str) -> Dict[str, Any]:
-    return get_game().undo_last_chat(minister_name)
 
 
 @app.post("/api/ministers/{minister_name}/chat/stream")

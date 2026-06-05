@@ -391,6 +391,9 @@ class GameSession:
         self.last_decree = ""
         self.last_report = ""
         self._pending_cheat = ""  # HITL 暂停期间暂存的 cheat，phase2 取回
+        # HITL 决策点 + phase1 推演上下文（进程内存，不落库；重启即丢，按重跑推演处理）
+        self._pending_decisions: List[Dict[str, object]] = []
+        self._pending_resolve_ctx: Dict[str, object] = {}
         self._begun = False
 
     # ── 回合生命周期 ──────────────────────────────────────────────────────
@@ -439,18 +442,6 @@ class GameSession:
         """回合结束（resolve 已推进 state.turn）；阶段回 summoning。"""
         self.state.turn_phase = TurnPhase.SUMMONING.value
         self.db.save_state(self.state)
-
-    def refresh_runtime_after_chat_rollback(self) -> None:
-        """撤回召对副作用后，用 DB 真相刷新内存人物表和本回合 Agent registry。"""
-        self.state = self.db.load_state()
-        _sync_offices_from_db_impl(self.content, self.db)
-        if self.registry is not None:
-            context = CourtContext(
-                state=self.state,
-                db=self.db,
-                previous_summary=self.previous_summary,
-            )
-            self.registry = MinisterRegistry(self.llm_config, self.agno_db, context)
 
     # ── 召见阶段 ──────────────────────────────────────────────────────────
 
@@ -907,9 +898,12 @@ class GameSession:
         )
         if result.awaiting:
             # 决策点暂停：回合未推进，存 awaiting 态供刷新恢复；待 submit_decisions 续跑。
-            # 同进程内暂存 cheat，phase2 调用方未重传时取回——否则强制结算项会在
-            # 决策暂停后丢失（extractor 收不到既成事实）。刷新丢推演是既定行为，不落库。
+            # 决策点 + 推演上下文 + cheat 全暂存进程内存（不落库）。phase2 调用方未重传
+            # cheat 时取回——否则强制结算项会在决策暂停后丢失（extractor 收不到既成事实）。
+            # 刷新/重启丢推演上下文是既定行为，重启后按重跑推演处理。
             self._pending_cheat = cheat_directive
+            self._pending_decisions = result.decisions
+            self._pending_resolve_ctx = result.resolve_ctx
             self.state.turn_phase = TurnPhase.AWAITING_DECISION.value
             self.db.save_state(self.state)
             return result
@@ -920,8 +914,9 @@ class GameSession:
         return result
 
     def pending_decisions(self) -> List[Dict[str, object]]:
-        """本回合待裁/已裁决策点（awaiting_decision 态下供前端弹窗/刷新恢复）。"""
-        return self.db.list_pending_decisions(self.state.turn)
+        """本回合待裁/已裁决策点（awaiting_decision 态下供前端弹窗/刷新恢复）。
+        进程内存持有；进程重启后为空（重启即丢，按重跑推演处理）。"""
+        return getattr(self, "_pending_decisions", [])
 
     def submit_decisions(
         self, choices: List[Dict[str, object]], on_event=None, cheat_directive: str = ""
@@ -931,27 +926,28 @@ class GameSession:
         要求当前处于 awaiting_decision 态。返回完整结算报告，置 issued。"""
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
             raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
-        # 回写选择
-        stored = self.db.list_pending_decisions(self.state.turn)
-        import json as _json
+        # 回写选择到进程内存的决策点（不落库）。phase1 重启后内存空，此时无可裁项。
+        stored = getattr(self, "_pending_decisions", [])
+        if not stored:
+            raise ValueError("无待裁决策点（进程重启已丢，请重跑推演）。")
         for d in stored:
             idx = int(d["idx"])
             choice = choices[idx] if idx < len(choices) else None
-            if not isinstance(choice, dict):
-                choice = {}
-            self.db.conn.execute(
-                "UPDATE pending_decisions SET choice_json=?, status='decided' WHERE turn=? AND idx=?",
-                (_json.dumps(choice, ensure_ascii=False), self.state.turn, idx),
-            )
-        self.db.conn.commit()
+            d["choice"] = choice if isinstance(choice, dict) else {}
+            d["status"] = "decided"
         # caller 未重传 cheat 时，取回 phase1 暂存的（同进程内存）；用完即清。
         effective_cheat = cheat_directive or getattr(self, "_pending_cheat", "")
-        self._pending_cheat = ""
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
+            resolve_ctx=getattr(self, "_pending_resolve_ctx", {}),
+            decisions=stored,
             on_event=on_event, content=self.content, registry=self.registry,
             cheat_directive=effective_cheat,
         )
+        # 结算完清进程内存暂存。
+        self._pending_cheat = ""
+        self._pending_decisions = []
+        self._pending_resolve_ctx = {}
         self.last_report = report
         self.state.turn_phase = TurnPhase.ISSUED.value
         self.db.save_state(self.state)

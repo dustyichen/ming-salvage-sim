@@ -1,5 +1,5 @@
 import React from "react";
-import { Check, Crown, Edit3, Landmark, Loader2, Lock, MessageSquare, RotateCcw, ScrollText, Send, Star, Trash2, X } from "lucide-react";
+import { Check, Crown, Edit3, Landmark, Loader2, Lock, MessageSquare, ScrollText, Send, Star, Trash2, X } from "lucide-react";
 import { api } from "../api";
 import { ExtractionView } from "./extraction";
 import { FullscreenModal, MinisterPortrait, cacheBust } from "./hud";
@@ -507,7 +507,6 @@ export function ChatModal({
   pendingUserMessage,
   streamingMinisterMessage,
   chatNotice,
-  canUndoLastChat,
   composerHint,
   input,
   busy,
@@ -515,7 +514,6 @@ export function ChatModal({
   secretOrders,
   onInput,
   onSend,
-  onUndo,
   onHint,
   onFavorite,
   onOpenEdict,
@@ -528,7 +526,6 @@ export function ChatModal({
   pendingUserMessage: string;
   streamingMinisterMessage: string;
   chatNotice: string;
-  canUndoLastChat: boolean;
   composerHint: string;
   input: string;
   busy: string;
@@ -536,7 +533,6 @@ export function ChatModal({
   secretOrders: SecretOrder[];
   onInput: (value: string) => void;
   onSend: (text?: string) => void;
-  onUndo: () => void;
   onHint: (value: string) => void;
   onFavorite: () => void;
   onOpenEdict: () => void;
@@ -680,10 +676,6 @@ export function ChatModal({
             <button className={`primary-action ${!input.trim() ? "is-empty" : ""}`} onClick={handleSend} disabled={!!busy}>
               <Send size={15} />
               发送
-            </button>
-            <button className="secondary-action composer-undo" onClick={onUndo} disabled={!!busy || !canUndoLastChat}>
-              <RotateCcw size={15} />
-              撤回本轮
             </button>
             <button className="secondary-action composer-exit" onClick={onClose}>
               <X size={15} />

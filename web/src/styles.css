@@ -3705,7 +3705,6 @@ button:disabled {
 
 /* 召对发送 / 退出按钮：黑字白底 */
 .modal-bg-chat .composer-actions .primary-action,
-.modal-bg-chat .composer-actions .composer-undo,
 .modal-bg-chat .composer-actions .composer-exit {
   color: #1a1410 !important;
   background: rgba(252, 249, 240, 0.92) !important;
@@ -3715,15 +3714,6 @@ button:disabled {
 
 .modal-bg-chat .composer-actions .primary-action:hover {
   background: rgba(255, 235, 190, 0.96) !important;
-}
-
-.modal-bg-chat .composer-actions .composer-undo:hover:not(:disabled) {
-  background: rgba(255, 235, 190, 0.96) !important;
-}
-
-.modal-bg-chat .composer-actions .composer-undo:disabled {
-  opacity: 0.48;
-  cursor: not-allowed;
 }
 
 .modal-bg-chat .composer-actions .composer-exit:hover {
@@ -4132,6 +4122,15 @@ button:disabled {
   border: 1px solid rgba(98, 70, 34, 0.18);
   border-radius: 6px;
   background: #fffaf0;
+}
+.situation-drawer-row {
+  cursor: pointer;
+}
+.situation-drawer-row:hover,
+.situation-drawer-row:focus {
+  border-color: rgba(126, 76, 24, 0.34);
+  background: #fff4de;
+  outline: none;
 }
 .situation-drawer-row + .situation-drawer-row,
 .situation-drawer-closed + .situation-drawer-closed {

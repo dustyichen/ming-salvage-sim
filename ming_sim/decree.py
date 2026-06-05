@@ -118,6 +118,10 @@ class ResolveResult:
     awaiting: bool
     report: str = ""
     decisions: List[Dict[str, object]] = field(default_factory=list)
+    # awaiting=True 时随 decisions 带回 phase1 已算好的推演上下文（decree/narrative/
+    # simulator_payload/密令/记忆）。调用方（GameSession）存进程内存，phase2 原样回传续跑。
+    # 不落库——决策暂停期间进程重启即丢，按既定行为重跑推演。
+    resolve_ctx: Dict[str, object] = field(default_factory=dict)
 
 
 def write_decree_with_agno(
@@ -170,7 +174,6 @@ def write_decree_with_agno(
 def advance_without_edict(state: GameState, db: GameDB) -> None:
     apply_fixed_period_flows(db, state)
     message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
-    db.record_log(state, message)
     print("\n" + message)
     state.next_period()
     db.save_state(state)
@@ -302,15 +305,13 @@ def resolve_directives(
             f"固定收支已落账，事项 inertia 自然漂移；本{TURN_UNIT}无新立 issue。"
         )
         # 跳过 extractor，避免连锁失败
-        db.record_log(state, narrative[:1200])
         db.save_turn_report(state, narrative)
         db.save_turn_extraction(
             state, decree_text=decree_text, narrative=narrative,
             extractor_output=f"[推演 agent 失败] {exc}；本回合跳过 extractor。",
         )
         apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
-        for name in clear_gated_legacies(db, state):
-            db.record_log(state, f"帝国修正消除：{name}")
+        clear_gated_legacies(db, state)
         db.mark_directives_issued(state)
         state.next_period()
         db.save_state(state)
@@ -324,12 +325,20 @@ def resolve_directives(
     narrative, decisions = parse_decision_blocks(narrative)
     if decisions:
         tlog(f"[HITL] 检测到 {len(decisions)} 个决策点，暂停等皇帝亲裁：{[d['title'] for d in decisions]}")
-        db.save_resolve_context(
-            state.turn, decree_text, narrative, simulator_payload,
-            secret_orders=secret_orders_for_sim, relevant_memories=relevant_memories,
-        )
-        db.save_pending_decisions(state.turn, decisions)
-        return ResolveResult(awaiting=True, decisions=db.list_pending_decisions(state.turn))
+        # 决策点 + 推演上下文随 ResolveResult 带回，由 GameSession 存进程内存（不落库）。
+        # 给每个决策点补 idx/status，对齐旧 pending_decisions 行结构（前端/回写按 idx 寻址）。
+        decisions = [
+            {**d, "idx": i, "status": "pending", "choice": {}}
+            for i, d in enumerate(decisions)
+        ]
+        resolve_ctx = {
+            "decree_text": decree_text,
+            "narrative": narrative,
+            "simulator_payload": simulator_payload,
+            "secret_orders": secret_orders_for_sim,
+            "relevant_memories": relevant_memories,
+        }
+        return ResolveResult(awaiting=True, decisions=decisions, resolve_ctx=resolve_ctx)
 
     # 无决策点：透明续跑结算（cheat 仍可叠加）。
     report = _settle_after_narrative(
@@ -413,8 +422,7 @@ def _settle_after_narrative(
     _emit("stage", "落库与事项推进")
     applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
 
-    # 4) 把 narrative 与诏书写入 turn_logs 作下月前文
-    db.record_log(state, narrative[:1200])
+    # 4) 月末邸报落库（下月作前文）
     db.save_turn_report(state, narrative)
     # 推演链原始输入/输出留痕，事后可追「该立的 issue 为何没立」。
     db.save_turn_extraction(
@@ -441,9 +449,7 @@ def _settle_after_narrative(
     apply_issue_inertia_and_ongoing(db, state, touched_ids=touched_ids)
 
     # 7) 开局负面帝国修正：本月若达成消除条件即清除（程序判定，不靠 LLM/时长）
-    cleared = clear_gated_legacies(db, state)
-    for name in cleared:
-        db.record_log(state, f"帝国修正消除：{name}")
+    clear_gated_legacies(db, state)
 
     # 8) 结局判定：叙事型（退位/自尽，applied 已带）→ 数值型（京畿失守）→ 到期型（20 年/240 回合）。
     #    state.turn 此刻仍是刚结算完的本回合（next_period 之前）。
@@ -465,7 +471,6 @@ def _settle_after_narrative(
 
         ended = isinstance(outcome, dict) and outcome.get("status") != ENDING_ONGOING
         if ended:
-            db.record_log(state, f"结局判定：{outcome.get('summary', '')}")
             # 章节记忆（含本回合）已落库，国史编纂官读全程生成结局总评。
             ending_text = _generate_ending_summary(db, state, llm_config, agno_db, outcome, _emit)
             state.ended = True
@@ -514,38 +519,39 @@ def resolve_decisions_phase2(
     db: GameDB,
     agno_db: SqliteDb,
     llm_config: LLMConfig,
+    resolve_ctx: Dict[str, object],
+    decisions: List[Dict[str, object]],
     on_event: Optional[Callable[[str, str], None]] = None,
     content=None,
     registry=None,
     cheat_directive: str = "",
 ) -> str:
-    """phase2：皇帝亲裁完，读回 phase1 暂存上下文 + 已存决策点选择，续跑结算。
-    要求本回合处于 awaiting_decision（已有 resolve_context）。返回完整结算报告。"""
+    """phase2：皇帝亲裁完，用 phase1 带回的进程内存上下文（resolve_ctx）+ 已裁决策点
+    （decisions，含 choice）续跑结算。两者由 GameSession 持有并传入（不落库，重启即丢）。
+    返回完整结算报告。"""
     def _emit(kind: str, data: str) -> None:
         if on_event:
             on_event(kind, data)
 
-    ctx = db.get_resolve_context(state.turn)
-    if ctx is None:
+    if not resolve_ctx:
         raise LLMContractError("无待决推演上下文，无法续跑结算（phase1 未暂停或已结算）。")
-    decisions = db.list_pending_decisions(state.turn)
     decision_directive = _format_decision_directive(decisions)
     before_turn = state.turn
+    sp = resolve_ctx.get("simulator_payload")
+    sec = resolve_ctx.get("secret_orders")
+    mem = resolve_ctx.get("relevant_memories")
     report = _settle_after_narrative(
         state, db, agno_db, llm_config,
-        decree_text=str(ctx["decree_text"]),
-        narrative=str(ctx["narrative"]),
-        simulator_payload=ctx["simulator_payload"] if isinstance(ctx["simulator_payload"], dict) else {},
-        relevant_memories=ctx["relevant_memories"] if isinstance(ctx["relevant_memories"], list) else [],
-        secret_orders=ctx["secret_orders"] if isinstance(ctx["secret_orders"], list) else [],
+        decree_text=str(resolve_ctx.get("decree_text", "")),
+        narrative=str(resolve_ctx.get("narrative", "")),
+        simulator_payload=sp if isinstance(sp, dict) else {},
+        relevant_memories=mem if isinstance(mem, list) else [],
+        secret_orders=sec if isinstance(sec, list) else [],
         before_turn=before_turn, _emit=_emit,
         content=content, registry=registry,
         cheat_directive=cheat_directive,
         decision_directive=decision_directive,
     )
-    # 结算完清掉暂存（next_period 已在 _settle 内执行，故按 before_turn 清理本回合残留）。
-    db.clear_pending_decisions(before_turn)
-    db.clear_resolve_context(before_turn)
     return report
 
 

@@ -12,7 +12,7 @@ import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, Re
 import { SituationDrawer, SituationPanel } from "./components/situation";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
-import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingDecision, SecretOrder, Suggestion } from "./types";
+import type { AppView, ChatMessage, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingDecision, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
 function App() {
@@ -54,7 +54,6 @@ function App() {
   const [pendingUserMessage, setPendingUserMessage] = React.useState("");
   const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState("");
   const [chatNotice, setChatNotice] = React.useState("");
-  const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
   const [directiveText, setDirectiveText] = React.useState("");
@@ -83,6 +82,7 @@ function App() {
   const [cheatDirective, setCheatDirective] = React.useState("");
   // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
+  const settling = busy === "月末结算";
 
   const loadState = React.useCallback(async () => {
     const data = await api<GameState>("/api/game/state");
@@ -94,7 +94,7 @@ function App() {
   }, [selectedMinister]);
 
   const loadMinisterChat = React.useCallback(async (ministerName: string) => {
-    const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[]; can_undo_last_chat: boolean }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
+    const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[] }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
     const allKnown = [
       ...(state?.ministers || []),
       ...(state?.consorts || []),
@@ -102,7 +102,6 @@ function App() {
     setTemporaryActiveMinister(allKnown.some((m) => m.name === data.minister.name) ? null : data.minister);
     setChat(data.history);
     setSuggestions(data.suggestions);
-    setCanUndoLastChat(!!data.can_undo_last_chat);
   }, [state]);
 
   const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {
@@ -216,7 +215,6 @@ function App() {
       setPendingUserMessage("");
       setStreamingMinisterMessage("");
       setChatNotice("");
-      setCanUndoLastChat(false);
       setComposerHint("");
       return;
     }
@@ -224,16 +222,19 @@ function App() {
     setSuggestions([]);
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
-    setCanUndoLastChat(false);
     setComposerHint("");
     loadMinisterChat(selectedMinister).catch((err) => setError(err.message));
   }, [selectedMinister, loadMinisterChat]);
 
-  // 全局 ESC：按 z-index 优先级，最前面的弹窗先关
+  // 全局 ESC：按 z-index 优先级，最前面的弹窗先关；空闲时打开游戏菜单。
   React.useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report" || activeModal === "secret_orders" || activeModal === "long_goals") {
+      event.preventDefault();
+      if (settling) return;
+      if (activeModal === "menu") {
+        setActiveModal("none");
+      } else if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report" || activeModal === "secret_orders" || activeModal === "long_goals" || activeModal === "extraction" || activeModal === "ending") {
         // 召对/诏书等全屏弹窗最优先
         setActiveModal("none");
       } else if (drawerOpen) {
@@ -254,11 +255,25 @@ function App() {
         setSituationDrawerOpen(false);
       } else if (mapIntelOpen) {
         setMapIntelOpen(false);
+      } else {
+        setActiveModal("menu");
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeModal, drawerOpen, haremDrawerOpen, mapIntelOpen]);
+  }, [
+    activeModal,
+    appointmentDrawerOpen,
+    armyDrawerOpen,
+    buildingDrawerOpen,
+    drawerOpen,
+    economyDrawerOpen,
+    haremDrawerOpen,
+    mapIntelOpen,
+    regionDrawerOpen,
+    settling,
+    situationDrawerOpen,
+  ]);
 
   // 作弊控制台：Ctrl+~（或 Ctrl+`）切换显隐。强制结算唯一入口。
   React.useEffect(() => {
@@ -319,14 +334,12 @@ function App() {
       setChat([]);
       setSuggestions([]);
       setTemporaryActiveMinister(null);
-      setCanUndoLastChat(false);
     }
     setSelectedMinister(minister.name);
     setActiveModal("chat");
     setError("");
     setComposerHint("");
     setChatNotice("");
-    setCanUndoLastChat(false);
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
     loadMinisterChat(minister.name).catch((err) => setError(err.message));
@@ -364,7 +377,6 @@ function App() {
       setStreamingMinisterMessage("");
       setChat(data.history);
       setSuggestions(data.suggestions);
-      setCanUndoLastChat(!!data.can_undo_last_chat);
       setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count ?? current.pending_count } : current));
       await loadState();
       // 刷新密令列表（含历史，大臣可能调了 issue_secret_order tool）
@@ -381,7 +393,6 @@ function App() {
         setChat([]);
         setSuggestions([]);
         setStreamingMinisterMessage("");
-        setCanUndoLastChat(false);
         setSelectedMinister(data.next_minister);
         setActiveModal("chat");
         setChatNotice(`已传${data.next_minister}入殿。`);
@@ -397,34 +408,6 @@ function App() {
       }
       setPendingUserMessage("");
       setStreamingMinisterMessage("");
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const undoLastChat = async () => {
-    if (busy || !activeMinister || !canUndoLastChat) return;
-    const ok = window.confirm("将撤回最近一轮召对及其政务影响，是否继续？");
-    if (!ok) return;
-    setBusy("撤回召对");
-    setError("");
-    setChatNotice("");
-    setComposerHint("");
-    setPendingUserMessage("");
-    setStreamingMinisterMessage("");
-    try {
-      const data = await api<ChatUndoResponse>(`/api/ministers/${encodeURIComponent(activeMinister.name)}/chat/undo`, {
-        method: "POST",
-      });
-      setChat(data.history);
-      setSuggestions(data.suggestions);
-      setCanUndoLastChat(!!data.can_undo_last_chat);
-      setSecretOrders(data.secret_orders || []);
-      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
-      await loadState();
-      setChatNotice("已撤回最近一轮召对。");
-    } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy("");
@@ -677,7 +660,6 @@ function App() {
     }
   };
 
-  const settling = busy === "月末结算";
   const guardClose = (fn: () => void) => () => {
     if (settling) return;
     fn();
@@ -910,7 +892,6 @@ function App() {
             pendingUserMessage={pendingUserMessage}
             streamingMinisterMessage={streamingMinisterMessage}
             chatNotice={chatNotice}
-            canUndoLastChat={canUndoLastChat}
             composerHint={composerHint}
             input={input}
             busy={busy}
@@ -918,7 +899,6 @@ function App() {
             secretOrders={secretOrders.filter((o) => o.minister_name === activeMinister.name && (o.status === "active" || o.status === "pending_review"))}
             onInput={setInput}
             onSend={sendChat}
-            onUndo={undoLastChat}
             onHint={setComposerHint}
             onFavorite={() => toggleFavorite(activeMinister)}
             onOpenEdict={() => setActiveModal("edict")}

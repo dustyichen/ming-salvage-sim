@@ -131,19 +131,38 @@ function SituationDrawerGroup({ title, issues }: { title: string; issues: Issue[
   return (
     <section className="situation-drawer-section">
       <h3>{title}</h3>
-      {issues.map((issue) => (
-        <article className={`situation-drawer-row ${issueTone(issue.bar_value)}`} key={`drawer-${issue.id}`}>
-          <div className="situation-drawer-row-head">
-            <b>{issue.title}</b>
-            <span>{issue.bar_value}</span>
-          </div>
-          <div className="situation-bar">
-            <i style={{ width: `${Math.max(0, Math.min(100, issue.bar_value))}%` }} />
-          </div>
-          <p>{issue.stage_text}</p>
-        </article>
-      ))}
+      {issues.map((issue) => <SituationDrawerRow issue={issue} key={`drawer-${issue.id}`} />)}
     </section>
+  );
+}
+
+function SituationDrawerRow({ issue }: { issue: Issue }) {
+  const [detail, setDetail] = React.useState(false);
+  return (
+    <>
+      <article
+        className={`situation-drawer-row ${issueTone(issue.bar_value)}`}
+        role="button"
+        tabIndex={0}
+        onClick={() => setDetail(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setDetail(true);
+          }
+        }}
+      >
+        <div className="situation-drawer-row-head">
+          <b>{issue.title}</b>
+          <span>{issue.bar_value}</span>
+        </div>
+        <div className="situation-bar">
+          <i style={{ width: `${Math.max(0, Math.min(100, issue.bar_value))}%` }} />
+        </div>
+        <p>{issue.stage_text}</p>
+      </article>
+      {detail ? <SituationDetailModal issue={issue} onClose={() => setDetail(false)} /> : null}
+    </>
   );
 }
 
