@@ -9,7 +9,7 @@ import { BudgetHover, CommandSlot, FullscreenModal, HUD_BG, HUD_SLOTS, LegacyBar
 import { GrandMap, NodeIntel } from "./components/map";
 import { MenuPage } from "./components/menuPage";
 import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
-import { SituationPanel } from "./components/situation";
+import { SituationDrawer, SituationPanel } from "./components/situation";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
 import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingDecision, SecretOrder, Suggestion } from "./types";
@@ -34,6 +34,7 @@ function App() {
   const [state, setState] = React.useState<GameState | null>(null);
   const [selectedNodeId, setSelectedNodeId] = React.useState<string>("");
   const [mapIntelOpen, setMapIntelOpen] = React.useState(false);
+  const [situationDrawerOpen, setSituationDrawerOpen] = React.useState(false);
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [haremDrawerOpen, setHaremDrawerOpen] = React.useState(false);
   const [armyDrawerOpen, setArmyDrawerOpen] = React.useState(false);
@@ -249,6 +250,8 @@ function App() {
         setEconomyDrawerOpen(false);
       } else if (appointmentDrawerOpen) {
         setAppointmentDrawerOpen(false);
+      } else if (situationDrawerOpen) {
+        setSituationDrawerOpen(false);
       } else if (mapIntelOpen) {
         setMapIntelOpen(false);
       }
@@ -733,6 +736,8 @@ function App() {
               issues={state.issues}
               closedIssues={state.closed_this_turn || []}
               hasLegacies={(state.legacies || []).length > 0}
+              compact
+              onOpenDrawer={() => setSituationDrawerOpen(true)}
             />
           </QuadFrame>
         ) : null}
@@ -801,6 +806,13 @@ function App() {
           caption="擬詔/結束回合" sub={state.directives.length ? `${state.directives.length} 道` : "本回合"}
           onClick={() => setActiveModal("edict")} />
       </div>
+
+      <SituationDrawer
+        open={situationDrawerOpen}
+        issues={state.issues}
+        closedIssues={state.closed_this_turn || []}
+        onClose={() => setSituationDrawerOpen(false)}
+      />
 
       <CourtDrawer
         state={state}

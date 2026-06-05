@@ -1074,6 +1074,8 @@ class WebGame:
         registered_minister: str = "",
         displaced_minister: str = "",
         secret_order_id: int = 0,
+        tax_issue_id: int = 0,
+        tax_adjusted: str = "",
         chat_turn_id: int = 0,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
@@ -1093,6 +1095,8 @@ class WebGame:
             "registered_minister": registered_minister,
             "displaced_minister": displaced_minister,
             "secret_order_id": secret_order_id or 0,
+            "tax_issue_id": tax_issue_id or 0,
+            "tax_adjusted": tax_adjusted or "",
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "suggestions": self.suggestions_for(character),
@@ -1132,6 +1136,8 @@ class WebGame:
             registered_minister=result.registered_minister,
             displaced_minister=result.displaced_minister,
             secret_order_id=result.secret_order_id,
+            tax_issue_id=result.tax_issue_id,
+            tax_adjusted=result.tax_adjusted,
             chat_turn_id=chat_turn_id,
         )
 
@@ -1184,6 +1190,8 @@ class WebGame:
             next_minister = ""
             displaced = ""
             secret_order_id = 0
+            tax_issue_id = 0
+            tax_adjusted = ""
             if run_output is not None:
                 for tool_exec in getattr(run_output, "tools", None) or []:
                     res = str(getattr(tool_exec, "result", "") or "")
@@ -1246,6 +1254,12 @@ class WebGame:
                                 args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                                 payload_json = json.dumps(args, ensure_ascii=False)
                             secret_order_id = self.session._apply_secret_order(payload_json, minister_name)
+                    elif tool_name == "adjust_tax" or res.startswith("__adjust_tax__"):
+                        payload_json = res.removeprefix("__adjust_tax__").strip()
+                        if not payload_json:
+                            args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                            payload_json = json.dumps(args, ensure_ascii=False)
+                        tax_issue_id, tax_adjusted = self.session._apply_tax_adjust_issue(payload_json, character)
                     # 密令结案不再走大臣工具，由月末推演 + extractor 写入
             self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             payload = self._chat_payload(
@@ -1254,6 +1268,8 @@ class WebGame:
                 registered_minister=registered,
                 displaced_minister=displaced,
                 secret_order_id=secret_order_id,
+                tax_issue_id=tax_issue_id,
+                tax_adjusted=tax_adjusted,
                 chat_turn_id=chat_turn_id,
             )
             yield {"type": "done", "payload": payload}
@@ -1273,6 +1289,11 @@ class WebGame:
             {"label": "下密令", "text": "密令如下：", "prefix": True},
         ]
         skill_ids = set(available_skill_ids(character, self.db))
+        # office 专属快捷话术 chip 走 offices.court_grant_json(DB 唯一真相，seed 自 skills.json)，
+        # 固定开头话术硬触发对应 agno skill。加新 office chip 改 JSON 升版本，运行时改直接 UPDATE DB。
+        _grant = self.db.get_office_court_grant(character.office_type)
+        for chip in (_grant.get("chips") or []):
+            suggestions.insert(1, dict(chip))
         if "check_treasury" in skill_ids:
             suggestions.insert(1, {"label": "查钱粮", "text": "太仓和内库实数如何？本月哪些钱最急？"})
         if "check_military" in skill_ids or "front_line_plan" in skill_ids or "strategic_review" in skill_ids:

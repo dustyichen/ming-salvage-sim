@@ -24,25 +24,19 @@ from ming_sim.tools import _duty_location, build_minister_tools
 _content: Optional[GameContent] = None
 _skills_cache: Dict[str, Skills] = {}
 
-# 各 office_type 对应的 skill 子集。只给该类大臣实际需要的 skill，
-# 避免把 simulator/extractor 专用 skill 注入大臣 system prompt 浪费 token。
-_OFFICE_SKILLS: Dict[str, List[str]] = {
-    # 所有大臣共有：记忆检索、拟旨入档、密令、召见传人
-    # 人物>100 或军队>30 时改为动态 tool 查询（当前 40人/17军，暂全量注入 system）
-    "_base": ["memory-recall", "decree-drafting", "secret-order", "summon"],
-    # 礼部：额外选妃
-    "礼部":   ["consort-selection"],
-    # 司礼监：选妃
-    "司礼监": ["consort-selection"],
-}
+# 所有大臣共有的 agno skill：记忆检索、拟旨入档、密令、召见传人。
+# office 专属 skill（户部 tax-adjust、礼部/司礼监 consort-selection 等）走 skills.json
+# office_default_skills[office].agno_skills，加新 office 只改 JSON，不改这里。
+# 人物>100 或军队>30 时改为动态 tool 查询（当前 40人/17军，暂全量注入 system）。
+_BASE_SKILLS: List[str] = ["memory-recall", "decree-drafting", "secret-order", "summon"]
 
 
-def _skills_for(office_type: str, extra: List[str] = []) -> Skills:
-    """按 office_type 返回精简 skill 集。extra 为运行时动态追加（不缓存）。"""
-    cache_key = office_type if not extra else f"{office_type}+{','.join(sorted(extra))}"
+def _skills_for(extra: List[str] = []) -> Skills:
+    """返回 _base 公共 agno skill + extra（office 专属授权 skill / court-roster / army-roster）。
+    office 专属 skill 由 caller 从 offices.court_grant_json(DB) 取后并进 extra，本函数不读授权。"""
+    cache_key = ",".join(sorted(extra)) if extra else "_base"
     if cache_key not in _skills_cache:
-        names = list(_OFFICE_SKILLS["_base"])
-        names += _OFFICE_SKILLS.get(office_type, [])
+        names = list(_BASE_SKILLS)
         names += [n for n in extra if n not in names]
         loaders = [LocalSkills(f".agno_skills/{n}", validate=False) for n in names]
         _skills_cache[cache_key] = Skills(loaders)
@@ -457,15 +451,18 @@ def create_minister_agent(
         tools = build_minister_tools(character, context,
                                      use_roster_tool=use_roster_tool,
                                      use_army_tool=use_army_tool)
-        # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃：现场拟就秀女名单呈御览。
-        if character.office_type in ("司礼监", "礼部"):
+        # 奉旨选妃（present_consort_candidates）：现场拟就秀女名单呈御览。授权走
+        # offices.court_grant_json（DB 唯一真相，seed 自 skills.json），加新 office 改 JSON 并升版本。
+        _grant = context.db.get_office_court_grant(character.office_type)
+        if "present_consort_candidates" in (_grant.get("court_tools") or []):
             tools.append(_make_select_consort_tool(context))
-        extra_skills = []
+        # office 专属 agno skill（户部 tax-adjust、礼部/司礼监 consort-selection 等）走 DB 授权。
+        extra_skills = list(_grant.get("agno_skills") or [])
         if use_roster_tool:
             extra_skills.append("court-roster")
         if use_army_tool:
             extra_skills.append("army-roster")
-        minister_skills = _skills_for(character.office_type, extra=extra_skills)
+        minister_skills = _skills_for(extra=extra_skills)
     return Agent(
         name=character.name,
         id=f"minister-{character.name}",

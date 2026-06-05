@@ -199,8 +199,18 @@ def run_case(case: dict, args: argparse.Namespace) -> dict:
         result["extra"] = sorted(got - expect_top)
 
         if result["neg"]:
-            # 负样本：期望抽出为空（或不含敏感字段）
-            result["status"] = "PASS" if not got else "FAIL"
+            # 负样本：验「不该抽某敏感字段」。给了 neg_check_fields 则只查这些字段
+            # 不在 got 即 PASS（其余联想字段无所谓）；没给则回落「全空才 PASS」。
+            check = set(case.get("neg_check_fields") or [])
+            if check:
+                violated = sorted(check & got)
+                result["neg_violations"] = violated
+                result["status"] = "PASS" if not violated else "FAIL"
+                if violated:
+                    result["missing"] = []  # 负样本没有 missing 概念
+                    result["error"] = f"误抽敏感字段: {'、'.join(violated)}"
+            else:
+                result["status"] = "PASS" if not got else "FAIL"
         else:
             result["status"] = "PASS" if not result["missing"] else "FAIL"
 

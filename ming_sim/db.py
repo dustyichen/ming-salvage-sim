@@ -142,7 +142,8 @@ class GameDB:
                 authority_scope TEXT NOT NULL,
                 power INTEGER NOT NULL,
                 responsibility INTEGER NOT NULL,
-                corruption_risk INTEGER NOT NULL
+                corruption_risk INTEGER NOT NULL,
+                court_grant_json TEXT NOT NULL DEFAULT '{}'
             );
 
             CREATE TABLE IF NOT EXISTS characters (
@@ -774,6 +775,9 @@ class GameDB:
         # fiscal_config 科目元数据列（数据驱动预算目录）：budget_role=fixed 的 base 项靠
         # account/direction/display 由 flows.compute_budget_lines 动态生成预算行；
         # dynamic 项（田赋/辽饷/盐税/商税/皇庄）走省级公式/皇庄专路，这三列留空。
+        # offices 表存 court 授权 blob：{court_tools,agno_skills,chips} 的 json。
+        # court tool 挂载 / agno skill 注入 / 前端 chip 全读这列；改授权＝UPDATE offices 这行，不必改设定文件。
+        self.ensure_column("offices", "court_grant_json", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("fiscal_config", "budget_role", "TEXT NOT NULL DEFAULT 'fixed'")
         self.ensure_column("fiscal_config", "account", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("fiscal_config", "direction", "TEXT NOT NULL DEFAULT ''")
@@ -972,6 +976,50 @@ class GameDB:
         )
         self.conn.commit()
 
+    def init_office_grants(self) -> None:
+        """从 skills.json office_court_grants seed offices.court_grant_json（court 授权 blob）。
+
+        版本号 `office_grant_version` 走 kv_store（铁律，见 CLAUDE.md）：
+        - cur >= json：啥都不做（玩家/后台运行时改过的授权神圣不动）。
+        - cur <  json：把 JSON 授权整体刷进 offices 表（无行则补建），kv_set 推版本号。
+        改授权 = 改 skills.json 并升 __office_grant_version；运行时临时改 = 直接 UPDATE offices.court_grant_json。
+        """
+        json_ver = int(self.content.office_grant_version)
+        cur = int(self.kv_get("office_grant_version") or 0)
+        if cur >= json_ver:
+            return
+        for office_type, grant in self.content.office_court_grants.items():
+            blob = json.dumps(grant, ensure_ascii=False)
+            exists = self.conn.execute(
+                "SELECT 1 FROM offices WHERE office_type = ?", (office_type,)
+            ).fetchone()
+            if exists:
+                self.conn.execute(
+                    "UPDATE offices SET court_grant_json = ? WHERE office_type = ?",
+                    (blob, office_type),
+                )
+            else:
+                self.conn.execute(
+                    "INSERT INTO offices (office_type, skills, tools, authority_scope, power, responsibility, corruption_risk, court_grant_json) "
+                    "VALUES (?, '[]', '[]', '', 50, 50, 30, ?)",
+                    (office_type, blob),
+                )
+        self.kv_set("office_grant_version", str(json_ver))
+        self.conn.commit()
+
+    def get_office_court_grant(self, office_type: str) -> Dict[str, object]:
+        """读 offices.court_grant_json（court 授权 blob）。无行/空返回 {}。
+        court tool 挂载 / agno skill 注入 / 前端 chip 全走此入口，不读 content（DB 是运行时唯一真相）。"""
+        row = self.conn.execute(
+            "SELECT court_grant_json FROM offices WHERE office_type = ?", (office_type,)
+        ).fetchone()
+        if row is None:
+            return {}
+        try:
+            return json.loads(row["court_grant_json"] or "{}")
+        except (ValueError, TypeError):
+            return {}
+
     def iter_budget_items(self) -> "List[Dict[str, object]]":
         """返回 budget_role=fixed 的 base 科目（含 account/direction/display/sort_order）。
 
@@ -1065,17 +1113,22 @@ class GameDB:
             return key[:-5]
         return key
 
-    def apply_dynamic_fiscal_scale(self, stem: str, ratio: float) -> int:
-        """按 ratio 缩放所有省 regions.fiscal 中该 dynamic 税字段（辽饷/盐税/商税）。
+    def apply_dynamic_fiscal_scale(self, stem: str, ratio: float, region_id: str = "") -> int:
+        """按 ratio 缩放 regions.fiscal 中该 dynamic 税字段（辽饷/盐税/商税）。
 
-        ratio=0 即彻底罢废（字段归零）；0<ratio<1 即按比例削减。田赋走 _scale_tian_fu。
+        ratio=0 即彻底罢废（字段归零）；0<ratio<1 即按比例削减。田赋走 scale_tian_fu。
+        region_id 为空＝全国所有省；填省 id＝仅该省定向调。
         返回被改动的省数。皇庄不在此（走 fiscal_config）。命中映射外的 stem 返回 0。
         """
         field = self._DYNAMIC_REGION_FIELD.get(stem)
         if field is None:
             return 0
+        if region_id:
+            rows = self.conn.execute("SELECT id, fiscal FROM regions WHERE id = ?", (region_id,)).fetchall()
+        else:
+            rows = self.conn.execute("SELECT id, fiscal FROM regions").fetchall()
         touched = 0
-        for row in self.conn.execute("SELECT id, fiscal FROM regions").fetchall():
+        for row in rows:
             fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
             old = int(fiscal.get(field, 0) or 0)
             if old <= 0:
@@ -1093,17 +1146,24 @@ class GameDB:
             self.conn.commit()
         return touched
 
-    def scale_tian_fu(self, ratio: float) -> int:
-        """田赋＝官民田×田赋亩率(fiscal_config 全局 或 省 fiscal.tian_fu_li 覆盖)。按 ratio 缩放各省亩率：
-        在每省 fiscal 写 tian_fu_li = 全局亩率×ratio（覆盖全局）。ratio=0 即罢田赋（辽饷/盐/商各走自己字段不受影响）。
-        返回被改动的省数。"""
+    def scale_tian_fu(self, ratio: float, region_id: str = "") -> int:
+        """田赋＝官民田×田赋亩率(fiscal_config 全局 或 省 fiscal.tian_fu_li 覆盖)。按 ratio 缩放亩率。
+        region_id 为空＝全国：每省写 tian_fu_li = 全局亩率×ratio（一刀切覆盖，抹平省差异）。
+        region_id 填省 id＝单省定向：按该省**现有**亩率×ratio 缩放（保住江南重赋/边瘠轻赋的基差）。
+        ratio=0 即罢田赋（辽饷/盐/商各走自己字段不受影响）。返回被改动的省数。"""
         cfg = self.get_fiscal_config()
         global_li = int(cfg.get("田赋亩率_base", 250))
-        new_li = max(0, round(global_li * ratio))
+        if region_id:
+            rows = self.conn.execute("SELECT id, fiscal FROM regions WHERE id = ?", (region_id,)).fetchall()
+        else:
+            rows = self.conn.execute("SELECT id, fiscal FROM regions").fetchall()
         touched = 0
-        for row in self.conn.execute("SELECT id, fiscal FROM regions").fetchall():
+        for row in rows:
             fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
-            if int(fiscal.get("tian_fu_li", global_li)) == new_li:
+            cur_li = int(fiscal.get("tian_fu_li", global_li))
+            # 全国：统一覆盖为全局×ratio；单省：按该省现值×ratio（保住省差异）。
+            new_li = max(0, round((cur_li if region_id else global_li) * ratio))
+            if cur_li == new_li:
                 continue
             fiscal["tian_fu_li"] = new_li
             self.conn.execute(
@@ -1162,8 +1222,8 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO offices
-                    (office_type, skills, tools, authority_scope, power, responsibility, corruption_risk)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (office_type, skills, tools, authority_scope, power, responsibility, corruption_risk, court_grant_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         office_type,
@@ -1173,8 +1233,10 @@ class GameDB:
                         int(definition["power"]),
                         int(definition["responsibility"]),
                         int(definition["corruption_risk"]),
+                        json.dumps(self.content.office_court_grants.get(office_type, {}), ensure_ascii=False),
                     ),
                 )
+        self.init_office_grants()
 
         if not self.table_has_rows("characters"):
             for character in self.content.characters.values():

@@ -321,6 +321,47 @@ def _apply_issue_technologies(
     return attached
 
 
+def _apply_issue_fiscal(db: GameDB, state: GameState, ops: object, reason: str) -> None:
+    """落地 issue effect 里的 fiscal 段：调税 issue 结案时真改 region.fiscal。
+    op：{tax:田赋/辽饷/盐税/商税, ratio:倍率, region_id?:省id(空=全国), region_name?}。
+    田赋走 scale_tian_fu，辽饷/盐税/商税走 apply_dynamic_fiscal_scale；全国调同步改 fiscal_config base。
+    这是户部 adjust_tax 立项的唯一落库点——issue 成功才改账，失败/搁浅不动税。
+    """
+    if not isinstance(ops, list):
+        return
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        tax = str(op.get("tax") or "")
+        if tax not in ("田赋", "辽饷", "盐税", "商税"):
+            print(f"[WARN] issue effect fiscal: 税种非法 '{tax}'，跳过。op={op}")
+            continue
+        try:
+            ratio = float(op.get("ratio"))
+        except (TypeError, ValueError):
+            print(f"[WARN] issue effect fiscal: ratio 非数字，跳过。op={op}")
+            continue
+        if ratio < 0:
+            continue
+        region_id = str(op.get("region_id") or "").strip()
+        try:
+            if tax == "田赋":
+                touched = db.scale_tian_fu(ratio, region_id)
+            else:
+                touched = db.apply_dynamic_fiscal_scale(tax, ratio, region_id)
+            # 全国一刀切才同步 fiscal_config base（单省覆盖不动全局目录，否则全国账误随单省漂）。
+            if not region_id:
+                cfg = db.get_fiscal_config()
+                base_key = f"{tax}_base"
+                cur = cfg.get(base_key)
+                if cur is not None:
+                    db.set_fiscal_config(base_key, max(0, round(int(cur) * ratio)))
+            scope = op.get("region_name") or ("全国" if not region_id else region_id)
+            print(f"[issue_fiscal] {scope}{tax}×{ratio} 落库（{touched}省）：{reason}")
+        except Exception as exc:
+            print(f"[WARN] issue effect fiscal 落库失败：{exc}；op={op}")
+
+
 def issue_to_payload(row: sqlite3.Row, recent_advances: List[sqlite3.Row]) -> Dict[str, object]:
     """喂给推演 agent 的事项精简视图：状态、进度、效果、最近一次推进。"""
     keys = row.keys() if hasattr(row, "keys") else []
@@ -958,6 +999,7 @@ def apply_issue_tracker_output(
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
             _preset_lg = _apply_issue_departments(db, state, effect.get("departments"), f"局势#{issue_id}结案", issue_id)
             _preset_lg = _apply_issue_technologies(db, state, effect.get("technologies"), f"局势#{issue_id}结案", issue_id) or _preset_lg
+            _apply_issue_fiscal(db, state, effect.get("fiscal"), f"局势#{issue_id}结案")
             _spawn_legacy_from_effect(db, state, _strip_legacy_if(effect, _preset_lg), issue_id, str(new_row["title"]))
         elif new_row["status"] == "failed":
             effect = json.loads(new_row["effect_on_fail"] or "{}")
@@ -1092,6 +1134,7 @@ def apply_issue_tracker_output(
             # 部门/科技只随成功结案落实体（失败的设衙门/科研不落）
             _preset_lg = _apply_issue_departments(db, state, effect.get("departments"), f"局势#{issue_id}结案", issue_id)
             _preset_lg = _apply_issue_technologies(db, state, effect.get("technologies"), f"局势#{issue_id}结案", issue_id) or _preset_lg
+            _apply_issue_fiscal(db, state, effect.get("fiscal"), f"局势#{issue_id}结案")
         _spawn_legacy_from_effect(db, state, _strip_legacy_if(effect, _preset_lg), issue_id, str(new_row["title"]))
         applied_closes.append({
             "issue_id": issue_id,

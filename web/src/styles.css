@@ -4048,6 +4048,135 @@ button:disabled {
   cursor: pointer;
 }
 
+.situation-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+  background: rgba(0, 0, 0, 0.24);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+.situation-drawer-scrim.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.situation-drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 40;
+  width: min(460px, calc(100vw - 44px));
+  display: flex;
+  flex-direction: column;
+  color: #1b130d;
+  background: rgba(252, 248, 236, 0.98);
+  border-right: 1px solid rgba(110, 74, 30, 0.28);
+  box-shadow: 8px 0 28px rgba(0, 0, 0, 0.34);
+  transform: translateX(-104%);
+  transition: transform 180ms ease;
+}
+.situation-drawer.open {
+  transform: translateX(0);
+}
+.situation-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid rgba(95, 60, 24, 0.16);
+  background: #fffdf6;
+}
+.situation-drawer-head strong {
+  display: block;
+  color: #16100a;
+  font-size: 1.3rem;
+  line-height: 1.1;
+}
+.situation-drawer-head span {
+  display: block;
+  margin-top: 4px;
+  color: #725c3e;
+  font-size: 0.82rem;
+}
+.situation-drawer-head button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(80, 48, 18, 0.18);
+  border-radius: 6px;
+  background: rgba(80, 48, 18, 0.05);
+  color: #2a180a;
+  font-size: 1.45rem;
+  line-height: 1;
+}
+.situation-drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px 24px;
+}
+.situation-drawer-section + .situation-drawer-section {
+  margin-top: 18px;
+}
+.situation-drawer-section h3 {
+  margin: 0 0 9px;
+  color: #7a3a25;
+  font-size: 0.9rem;
+  line-height: 1.2;
+}
+.situation-drawer-row,
+.situation-drawer-closed {
+  padding: 11px 12px;
+  border: 1px solid rgba(98, 70, 34, 0.18);
+  border-radius: 6px;
+  background: #fffaf0;
+}
+.situation-drawer-row + .situation-drawer-row,
+.situation-drawer-closed + .situation-drawer-closed {
+  margin-top: 8px;
+}
+.situation-drawer-row-head,
+.situation-drawer-closed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #21160e;
+}
+.situation-drawer-row-head b,
+.situation-drawer-closed-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.situation-drawer-row-head span {
+  flex: 0 0 auto;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+.situation-drawer-row p,
+.situation-drawer-closed p {
+  margin: 7px 0 0;
+  color: #5c4932;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.situation-drawer-closed.failed {
+  border-color: rgba(166, 54, 42, 0.34);
+  background: #fff5ef;
+}
+.situation-drawer-closed-head b {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #ad3026;
+  color: #fff;
+  font-size: 0.78rem;
+}
+
 /* 顶栏：民心+皇威双值并排 */
 .hud2-metric-pair { display: flex; gap: 8%; align-items: center; }
 .hud2-metric-one { display: inline-flex; gap: 0.25em; align-items: baseline; white-space: nowrap; }
@@ -6622,6 +6751,47 @@ button:disabled {
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(95, 60, 24, 0.55) rgba(88, 55, 24, 0.12);
+}
+.hud2-issue-quad .situation-panel.compact {
+  cursor: pointer;
+  overflow: hidden;
+}
+.hud2-issue-quad .situation-panel.compact .situation-closed-list,
+.hud2-issue-quad .situation-panel.compact .situation-group {
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+.hud2-issue-quad .situation-panel.compact .situation-closed-row {
+  padding: 4px 5px;
+}
+.hud2-issue-quad .situation-panel.compact .situation-closed-effect {
+  display: none;
+}
+.hud2-issue-quad .situation-panel.compact .situation-row {
+  padding: 2px 4px;
+}
+.hud2-issue-quad .situation-panel.compact .situation-closed-row:nth-child(n+3),
+.hud2-issue-quad .situation-panel.compact .situation-row:nth-child(n+7) {
+  display: none;
+}
+.situation-more-hint {
+  width: 100%;
+  margin-top: 3px;
+  padding: 2px 3px;
+  border: 1px solid rgba(90, 54, 20, 0.18);
+  border-radius: 4px;
+  background: rgba(255, 250, 236, 0.48);
+  color: rgba(60, 36, 16, 0.72);
+  font-size: 1.2cqh;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.25;
+}
+.situation-more-hint:hover {
+  background: rgba(255, 250, 236, 0.72);
+  color: rgba(48, 28, 10, 0.9);
 }
 .hud2-issue-quad .situation-list {
   min-height: 0;

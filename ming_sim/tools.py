@@ -249,6 +249,31 @@ def build_minister_tools(character: Character, context: CourtContext,
         """核算军饷调度。"""
         return skill_template("allocate_payroll", target=target)
 
+    def adjust_tax(tax: str, ratio: float, region: str = "", reason: str = "") -> str:
+        """户部奏请调整税额，立为一道可追踪调税事项（issue）。
+        非即时改账：事项进度推到满才落库，推演期间会被士绅抗税/有司阳奉顶回——加征越狠越难磨平。
+        tax 须为 田赋/辽饷/盐税/商税 之一；
+        ratio 为新额倍率：1.0=不变，1.3=加三成，0.7=减三成，0=罢废该税；
+        region 留空=全国一律，填省名（如「南直隶」「浙江」）=仅该省定向调，保住省间税差；
+        reason 为调税缘由。皇庄/田亩量级走后台，不在此 tool。"""
+        tx = (tax or "").strip()
+        if tx not in ("田赋", "辽饷", "盐税", "商税"):
+            return f"调税失败：税种须为 田赋/辽饷/盐税/商税 之一，收到「{tx}」。"
+        try:
+            r = float(ratio)
+        except (TypeError, ValueError):
+            return f"调税失败：倍率须为数字，收到「{ratio}」。"
+        if r < 0:
+            return "调税失败：倍率不能为负（0=罢废，1.0=不变）。"
+        import json as _json
+        payload = _json.dumps(
+            {"tax": tx, "ratio": r,
+             "region": (region or "").strip(),
+             "reason": (reason or "").strip()},
+            ensure_ascii=False,
+        )
+        return f"__adjust_tax__{payload}"
+
     def propose_directive(decree_text: str) -> str:
         """把已定处置方案拟成一道圣旨草稿呈给皇帝审阅。decree_text 为完整圣旨正文。"""
         text = (decree_text or "").strip()
@@ -492,10 +517,20 @@ def build_minister_tools(character: Character, context: CourtContext,
         tools.append(query_court_roster)
     if use_army_tool:
         tools.append(query_army_roster)
-    if character.office_type == "吏部":
-        tools.append(propose_appointment)
-    if character.office_type in ("户部", "内阁", "司礼监"):
-        tools.extend([check_treasury, allocate_payroll, audit_tax_arrears])
+    # office 专属 court tool 授权走 skills.json office_default_skills[office].court_tools，
+    # 加新 office / 改授权只改 JSON，不改这里。present_consort_candidates 在 registry 单独挂，不在此表生效。
+    _COURT_TOOL_FUNCS = {
+        "propose_appointment": propose_appointment,
+        "check_treasury": check_treasury,
+        "allocate_payroll": allocate_payroll,
+        "audit_tax_arrears": audit_tax_arrears,
+        "adjust_tax": adjust_tax,
+    }
+    grant = context.db.get_office_court_grant(character.office_type)
+    for tool_name in (grant.get("court_tools") or []):
+        fn = _COURT_TOOL_FUNCS.get(tool_name)
+        if fn is not None:
+            tools.append(fn)
     unique_tools = []
     seen_tool_names: set = set()
     for tool in tools:

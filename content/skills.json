@@ -1,4 +1,5 @@
 {
+  "__office_grant_version": 1,
   "common_skills": [
     "view_state",
     "list_memorials",
@@ -257,43 +258,84 @@
     ]
   },
   "office_default_skills": {
-    "内阁": [
-      "convene_court_debate",
-      "coordinate_ministries"
-    ],
-    "户部": [
-      "check_treasury",
-      "audit_accounts",
-      "allocate_payroll"
-    ],
-    "兵部": [
-      "check_military",
-      "mobilize_troops",
-      "review_generals"
-    ],
-    "工部": [
-      "estimate_project",
-      "run_technical_trial"
-    ],
-    "司礼监": [
-      "inner_court_inquiry",
-      "transmit_edict"
-    ],
-    "锦衣卫": [
-      "secret_investigation"
-    ],
-    "东厂": [
-      "secret_investigation",
-      "intimidate_obstruction"
-    ],
-    "边镇": [
-      "check_military",
-      "mobilize_troops"
-    ],
-    "后宫": [
-      "cultivate_consort"
-    ],
-    "外臣": []
+    "内阁": {
+      "display_skills": ["convene_court_debate", "coordinate_ministries"],
+      "court_tools": ["check_treasury", "allocate_payroll", "audit_tax_arrears"],
+      "agno_skills": [],
+      "chips": []
+    },
+    "吏部": {
+      "display_skills": [],
+      "court_tools": ["propose_appointment"],
+      "agno_skills": [],
+      "chips": []
+    },
+    "户部": {
+      "display_skills": ["check_treasury", "audit_accounts", "allocate_payroll"],
+      "court_tools": ["check_treasury", "allocate_payroll", "audit_tax_arrears", "adjust_tax"],
+      "agno_skills": ["tax-adjust"],
+      "chips": [
+        {"label": "调税", "text": "调税如下：把 [税种：田赋/辽饷/盐税/商税] [加征/减征/罢废，幅度几成] [全国 或 某省]。", "prefix": true}
+      ]
+    },
+    "兵部": {
+      "display_skills": ["check_military", "mobilize_troops", "review_generals"],
+      "court_tools": [],
+      "agno_skills": [],
+      "chips": []
+    },
+    "工部": {
+      "display_skills": ["estimate_project", "run_technical_trial"],
+      "court_tools": [],
+      "agno_skills": [],
+      "chips": []
+    },
+    "礼部": {
+      "display_skills": [],
+      "court_tools": ["present_consort_candidates"],
+      "agno_skills": ["consort-selection"],
+      "chips": [
+        {"label": "选妃", "text": "选妃如下：", "prefix": true}
+      ]
+    },
+    "司礼监": {
+      "display_skills": ["inner_court_inquiry", "transmit_edict"],
+      "court_tools": ["check_treasury", "allocate_payroll", "audit_tax_arrears", "present_consort_candidates"],
+      "agno_skills": ["consort-selection"],
+      "chips": [
+        {"label": "选妃", "text": "选妃如下：", "prefix": true}
+      ]
+    },
+    "锦衣卫": {
+      "display_skills": ["secret_investigation"],
+      "court_tools": [],
+      "agno_skills": [],
+      "chips": []
+    },
+    "东厂": {
+      "display_skills": ["secret_investigation", "intimidate_obstruction"],
+      "court_tools": [],
+      "agno_skills": [],
+      "chips": []
+    },
+    "边镇": {
+      "display_skills": ["check_military", "mobilize_troops"],
+      "court_tools": [],
+      "agno_skills": [],
+      "chips": []
+    },
+    "后宫": {
+      "display_skills": ["cultivate_consort"],
+      "court_tools": [],
+      "agno_skills": [],
+      "chips": []
+    },
+    "外臣": {
+      "display_skills": [],
+      "court_tools": [],
+      "agno_skills": [],
+      "chips": []
+    }
   },
   "personal_skill_ids": {
     "毕自严": [

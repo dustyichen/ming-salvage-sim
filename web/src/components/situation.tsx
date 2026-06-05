@@ -18,18 +18,31 @@ export function groupIssues(issues: Issue[]) {
   };
 }
 
-export function SituationPanel({ issues, closedIssues, hasLegacies }: {
+export function SituationPanel({ issues, closedIssues, hasLegacies, compact = false, onOpenDrawer }: {
   issues: Issue[];
   closedIssues: ClosedIssue[];
   hasLegacies: boolean;
+  compact?: boolean;
+  onOpenDrawer?: () => void;
 }) {
   const { active, longTerm, nearTerm } = groupIssues(issues);
   if (!active.length && !closedIssues.length) return null;
+  const compactLimit = 6;
+  const shownClosed = compact ? closedIssues.slice(0, Math.min(2, compactLimit)) : closedIssues;
+  const remainingCompactSlots = Math.max(0, compactLimit - shownClosed.length);
+  const shownLongTerm = compact ? longTerm.slice(0, Math.min(2, remainingCompactSlots)) : longTerm;
+  const shownNearTerm = compact ? nearTerm.slice(0, Math.max(0, remainingCompactSlots - shownLongTerm.length)) : nearTerm;
+  const totalCount = active.length + closedIssues.length;
+  const shownCount = shownClosed.length + shownLongTerm.length + shownNearTerm.length;
+  const hiddenCount = Math.max(0, totalCount - shownCount);
   return (
-    <aside className={`situation-panel ${hasLegacies ? "with-legacies" : ""}`} aria-label="局势进度">
-      {closedIssues.length ? (
+    <aside
+      className={`situation-panel ${hasLegacies ? "with-legacies" : ""} ${compact ? "compact" : ""}`}
+      aria-label="局势进度"
+    >
+      {shownClosed.length ? (
         <div className="situation-closed-list">
-          {closedIssues.map((ci) => (
+          {shownClosed.map((ci) => (
             <div className={`situation-closed-row ${ci.status}`} key={`closed-${ci.id}`} tabIndex={0}>
               <div className="situation-closed-head">
                 <span className="situation-closed-badge">{ci.status === "resolved" ? "已结案" : ci.status === "failed" ? "已崩坏" : "已撤"}</span>
@@ -40,23 +53,97 @@ export function SituationPanel({ issues, closedIssues, hasLegacies }: {
           ))}
         </div>
       ) : null}
-      {longTerm.length ? (
+      {shownLongTerm.length ? (
         <div className="situation-group">
           <div className="situation-group-title">长期局势</div>
           <div className="situation-list">
-            {longTerm.map((issue) => <SituationRow key={issue.id} issue={issue} />)}
+            {shownLongTerm.map((issue) => <SituationRow key={issue.id} issue={issue} />)}
           </div>
         </div>
       ) : null}
-      {nearTerm.length ? (
+      {shownNearTerm.length ? (
         <div className="situation-group">
           <div className="situation-group-title">近期局势</div>
           <div className="situation-list">
-            {nearTerm.map((issue) => <SituationRow key={issue.id} issue={issue} />)}
+            {shownNearTerm.map((issue) => <SituationRow key={issue.id} issue={issue} />)}
           </div>
         </div>
       ) : null}
+      {compact && hiddenCount > 0 ? (
+        <button
+          type="button"
+          className="situation-more-hint"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenDrawer?.();
+          }}
+        >
+          共 {totalCount} 条，余 {hiddenCount} 条 · 查看全部
+        </button>
+      ) : null}
     </aside>
+  );
+}
+
+export function SituationDrawer({ open, issues, closedIssues, onClose }: {
+  open: boolean;
+  issues: Issue[];
+  closedIssues: ClosedIssue[];
+  onClose: () => void;
+}) {
+  const { active, longTerm, nearTerm } = groupIssues(issues);
+  return (
+    <>
+      <div className={`situation-drawer-scrim ${open ? "open" : ""}`} onClick={onClose} />
+      <aside className={`situation-drawer ${open ? "open" : ""}`} aria-label="局势进度抽屉" aria-hidden={!open}>
+        <div className="situation-drawer-head">
+          <div>
+            <strong>局势进度</strong>
+            <span>{active.length} 条在办 · {closedIssues.length} 条本回合结案</span>
+          </div>
+          <button onClick={onClose} aria-label="关闭局势抽屉">×</button>
+        </div>
+        <div className="situation-drawer-body">
+          {closedIssues.length ? (
+            <section className="situation-drawer-section">
+              <h3>本回合结案</h3>
+              {closedIssues.map((ci) => (
+                <article className={`situation-drawer-closed ${ci.status}`} key={`drawer-closed-${ci.id}`}>
+                  <div className="situation-drawer-closed-head">
+                    <b>{ci.status === "resolved" ? "已结案" : ci.status === "failed" ? "已崩坏" : "已撤"}</b>
+                    <span>{ci.title}</span>
+                  </div>
+                  <p>{formatClosedEffect(ci.effect)}</p>
+                </article>
+              ))}
+            </section>
+          ) : null}
+          <SituationDrawerGroup title="长期局势" issues={longTerm} />
+          <SituationDrawerGroup title="近期局势" issues={nearTerm} />
+        </div>
+      </aside>
+    </>
+  );
+}
+
+function SituationDrawerGroup({ title, issues }: { title: string; issues: Issue[] }) {
+  if (!issues.length) return null;
+  return (
+    <section className="situation-drawer-section">
+      <h3>{title}</h3>
+      {issues.map((issue) => (
+        <article className={`situation-drawer-row ${issueTone(issue.bar_value)}`} key={`drawer-${issue.id}`}>
+          <div className="situation-drawer-row-head">
+            <b>{issue.title}</b>
+            <span>{issue.bar_value}</span>
+          </div>
+          <div className="situation-bar">
+            <i style={{ width: `${Math.max(0, Math.min(100, issue.bar_value))}%` }} />
+          </div>
+          <p>{issue.stage_text}</p>
+        </article>
+      ))}
+    </section>
   );
 }
 
@@ -78,7 +165,11 @@ export function SituationRow({ issue }: { issue: Issue }) {
   };
   return (
     <div ref={ref} className={`situation-row ${issueTone(issue.bar_value)}`} tabIndex={0}
-      onClick={() => { setDetail(true); setTipPos(null); }} role="button"
+      onClick={(e) => {
+        if ((e.currentTarget.closest(".situation-panel") as HTMLElement | null)?.classList.contains("compact")) return;
+        setDetail(true);
+        setTipPos(null);
+      }} role="button"
       onMouseEnter={showTip} onMouseLeave={hideTip} onFocus={showTip} onBlur={hideTip}>
       <div className="situation-row-head">
         <span className="situation-name">{issue.title}</span>

@@ -33,6 +33,7 @@ from ming_sim.decree import (
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
 from ming_sim.llm_model import create_agno_db, extract_agent_text, verify_llm_available
+from ming_sim.matching import match_region_id_from_text
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig
 from ming_sim.paths import user_data_path
 from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
@@ -117,6 +118,8 @@ class ChatTurnResult:
     displaced_minister: str = ""   # 因新任腾缺被罢黜（dismissed）的原任者姓名
     refresh_ministers: List[str] = field(default_factory=list)
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
+    tax_issue_id: int = 0          # 本轮户部调税立的 issue id（0=未调税）
+    tax_adjusted: str = ""         # 本轮户部调税立项摘要（""=未调税）
 
 
 @dataclass
@@ -635,6 +638,12 @@ class GameSession:
                         order_id = 0
                     if order_id:
                         result.secret_order_id = order_id
+            elif tool_name == "adjust_tax" or tool_result.startswith("__adjust_tax__"):
+                payload = tool_result.removeprefix("__adjust_tax__").strip()
+                issue_id, summary = self._apply_tax_adjust_issue(payload, character)
+                if issue_id:
+                    result.tax_issue_id = issue_id
+                    result.tax_adjusted = summary
         return result
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
@@ -647,6 +656,60 @@ class GameSession:
         except (ValueError, TypeError):
             return ("", "")
         return apply_appointment(self.db, self.state, self.content, self.registry, data)
+
+    def _apply_tax_adjust_issue(self, payload: str, proposer: Character) -> Tuple[int, str]:
+        """户部 adjust_tax 落地：立一道调税 issue（不即时改账）。
+        调税参数装进 issue.effect_on_resolve.fiscal，issue bar 推到 100 结案时由
+        issues._apply_issue_fiscal 真改 region.fiscal——成功才落库，推演期间可被士绅阻力顶回。
+        返回 (issue_id, 摘要)；非法/无命中返回 (0, "")。"""
+        import json as _json
+        try:
+            data = _json.loads(payload) if payload else {}
+        except (ValueError, TypeError):
+            return (0, "")
+        tax = str(data.get("tax") or "")
+        if tax not in ("田赋", "辽饷", "盐税", "商税"):
+            return (0, "")
+        try:
+            ratio = float(data.get("ratio"))
+        except (TypeError, ValueError):
+            return (0, "")
+        if ratio < 0:
+            return (0, "")
+        region_raw = str(data.get("region") or "").strip()
+        reason = str(data.get("reason") or "").strip()
+
+        region_id = ""
+        region_name = "全国"
+        if region_raw:
+            region_id = match_region_id_from_text(region_raw, self.content.regions) or ""
+            if not region_id:
+                return (0, "")
+            region_name = self.content.regions[region_id].name
+
+        pct = round(ratio * 100)
+        verb = "罢废" if ratio == 0 else (f"加征至原额{pct}%" if ratio > 1 else f"减征至原额{pct}%")
+        title = f"{region_name}{tax}{verb}"[:40]
+        fiscal_op = {"tax": tax, "ratio": ratio, "region_id": region_id, "region_name": region_name}
+
+        issue_id = self.db.insert_issue(
+            self.state,
+            kind="initiative",
+            title=title,
+            origin_kind="department",            # 户部主导，非诏书强推
+            origin_ref=f"tax:{tax}:{region_id or 'all'}",
+            bar_value=30,                          # 起步 30：需推演把士绅/征收阻力磨到 100 才落
+            bar_good_meaning=f"{tax}新额征齐落库",
+            bar_bad_meaning="士绅抗税/有司阳奉，调税搁浅",
+            stage_text=f"{proposer.name}奏请{title}",
+            severity=55,
+            region_hint=region_id,
+            tags=["户部", "财税", tax],
+            effect_on_resolve={"fiscal": [fiscal_op], "reason": reason or title},
+            resolve_condition=f"{region_name}有司照新额征齐{tax}入库",
+            fail_condition=f"{tax}抗征不前，调税名存实亡",
+        )
+        return (issue_id, f"{title}（已立项 #{issue_id}，待结算推进）")
 
     def _apply_unlisted_person_registration(self, payload: str) -> Tuple[str, bool]:
         """登记史实未预设/用户确认背景的人物，进入本局正式可召见人物池。"""
