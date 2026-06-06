@@ -1606,6 +1606,54 @@ select:focus-visible {
   font-size: 0.86rem;
 }
 
+.court-chat-decision {
+  align-self: stretch;
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px solid rgba(128, 91, 34, 0.24);
+  border-radius: 8px;
+  color: #17110a;
+  background: #fff3c9;
+}
+
+.court-chat-decision-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.court-chat-decision-head b {
+  color: #17110a;
+  font-size: 0.98rem;
+}
+
+.court-chat-decision-head span {
+  color: rgba(23, 17, 10, 0.58);
+  font-size: 0.78rem;
+}
+
+.court-chat-decision-options {
+  display: grid;
+  gap: 8px;
+}
+
+.court-chat-decision-options button {
+  padding: 9px 11px;
+  border: 1px solid rgba(128, 91, 34, 0.28);
+  border-radius: 6px;
+  color: #17110a;
+  background: rgba(255, 253, 245, 0.92);
+  text-align: left;
+  line-height: 1.55;
+}
+
+.court-chat-decision-options button:hover {
+  background: #ffe29a;
+}
+
 .court-chat-dock {
   position: fixed;
   left: 50%;

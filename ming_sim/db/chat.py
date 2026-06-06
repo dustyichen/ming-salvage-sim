@@ -42,6 +42,26 @@ class _ChatMixin:
         ).fetchone()
         return int(row["n"]) if row else 0
 
+    def load_recent_chat_rounds(
+        self, minister_name: str, max_rounds: int
+    ) -> List[Dict[str, str]]:
+        """取该大臣最近 max_rounds 轮纯文本对话（跨月连续，不分本月/往月，按 id）。
+        一轮=user+minister 两行；按 id DESC 取尾 2*max_rounds 行再反转为时间正序。
+        历史全在 chat_messages（每轮答完即落库），此查询是喂 LLM 历史的唯一来源——
+        不靠 agno session 存历史（agno runs 是整块 blob，读必全量进内存，无法分段）。
+        走 idx_chat_messages_minister(minister_name, id)，真 LIMIT 分段，不全表扫、不全量进内存。"""
+        if max_rounds <= 0:
+            return []
+        rows = self.conn.execute(
+            "SELECT turn, role, content FROM chat_messages "
+            "WHERE minister_name = ? ORDER BY id DESC LIMIT ?",
+            (minister_name, max_rounds * 2),
+        ).fetchall()
+        return [
+            {"turn": row["turn"], "role": row["role"], "content": row["content"]}
+            for row in reversed(rows)
+        ]
+
     def load_prev_chat_rounds(
         self, minister_name: str, before_turn: int, max_rounds: int
     ) -> List[Dict[str, str]]:

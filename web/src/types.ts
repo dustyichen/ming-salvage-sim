@@ -303,7 +303,13 @@ export type EndingPayload = {
 
 export type ChatMessage = { role: "user" | "minister"; content: string };
 
-export type CourtChatMessage = { role: "emperor" | "minister" | "conclusion"; speaker: string; content: string; displayContent?: string };
+export type CourtChatMessage = {
+  role: "emperor" | "minister" | "conclusion";
+  speaker: string;
+  content: string;
+  displayContent?: string;
+  options?: string[];
+};
 
 export type CourtChatResponse = {
   turn: number;

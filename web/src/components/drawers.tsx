@@ -675,12 +675,14 @@ export function CourtDrawer({
   courtChatBubbles,
   courtChatPanelOpen,
   courtChatLiveMessages,
+  courtChatDecision,
   courtChatSelectedMinisters,
   onCourtChatSelectedMinistersChange,
   onCourtChatInputChange,
   onSendCourtChat,
   onRefreshCourtChat,
   onCloseCourtChatPanel,
+  onChooseCourtChatDecision,
 }: {
   state: GameState;
   ministers: Minister[];
@@ -698,12 +700,14 @@ export function CourtDrawer({
   courtChatBubbles: Record<string, string>;
   courtChatPanelOpen: boolean;
   courtChatLiveMessages: CourtChatMessage[];
+  courtChatDecision: CourtChatMessage | null;
   courtChatSelectedMinisters: string[];
   onCourtChatSelectedMinistersChange: React.Dispatch<React.SetStateAction<string[]>>;
   onCourtChatInputChange: (value: string) => void;
   onSendCourtChat: (ministers: Minister[]) => void;
   onRefreshCourtChat: () => void;
   onCloseCourtChatPanel: () => void;
+  onChooseCourtChatDecision: (option: string) => void;
 }) {
   const [q, setQ] = React.useState("");
   const [showHistory, setShowHistory] = React.useState(false);
@@ -824,6 +828,21 @@ export function CourtDrawer({
                   </article>
                 ))}
                 {courtChatBusy ? <div className="court-chat-panel-thinking">殿上诸臣正相继出班...</div> : null}
+                {!courtChatBusy && courtChatDecision?.options?.length ? (
+                  <div className="court-chat-decision">
+                    <div className="court-chat-decision-head">
+                      <b>请陛下裁断</b>
+                      <span>选择一案转入诏书草案</span>
+                    </div>
+                    <div className="court-chat-decision-options">
+                      {courtChatDecision.options.map((option, index) => (
+                        <button key={`${index}-${option}`} type="button" onClick={() => onChooseCourtChatDecision(option)}>
+                          {option}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </section>
           </>
@@ -898,7 +917,7 @@ export function CourtDrawer({
           <textarea
             className="court-chat-input"
             value={courtChatInput}
-            placeholder="垂询群臣..."
+            placeholder={courtChatBusy ? "插话打断，扭转廷议..." : "垂询群臣..."}
             rows={1}
             onChange={(e) => onCourtChatInputChange(e.target.value)}
             onKeyDown={(e) => {
@@ -908,8 +927,8 @@ export function CourtDrawer({
               }
             }}
           />
-          <button className="court-chat-send" disabled={!canChat || courtChatBusy || !courtChatInput.trim()} onClick={() => onSendCourtChat(activeFiltered)}>
-            {courtChatBusy ? "群臣奏对中" : "发问"}
+          <button className="court-chat-send" disabled={!canChat || !courtChatInput.trim()} onClick={() => onSendCourtChat(activeFiltered)}>
+            {courtChatBusy ? "插话" : "发问"}
           </button>
           {courtChatError ? <div className="court-chat-error">{courtChatError}</div> : null}
         </div>

@@ -371,7 +371,38 @@ def build_simulator_context(simulator_payload: Optional[Dict[str, object]]) -> s
         tsv_blocks.append(_table_to_tsv(name, payload[name]))  # type: ignore[arg-type]
         consumed.add(name)
 
-    rest = {k: v for k, v in payload.items() if k not in consumed}
+    # Prefix-cache hygiene: keep volatile fields at the tail. Court chat builds a
+    # no-decree payload during summoning, while settlement builds a with-decree
+    # payload after fiscal tick / auto issues / due secret orders. If fields like
+    # decree_text or current_state appear early in this JSON block, DeepSeek can
+    # only reuse the table prefix and misses later stable board context. Preserve
+    # all data, but serialize low-churn metadata first and high-churn material last.
+    volatile_rest_order = (
+        "current_state",
+        "treasury_brief",
+        "factions_brief",
+        "classes_brief",
+        "powers_brief",
+        "active_issues",
+        "candidate_events",
+        "previous_narrative_tail",
+        "decree_text",
+        "deaths_this_turn",
+        "debuts_this_turn",
+        "relevant_memories",
+        "secret_orders",
+        "hitl_min_decisions",
+        "data_note",
+    )
+    rest_source = {k: v for k, v in payload.items() if k not in consumed}
+    volatile_keys = {k for k in volatile_rest_order if k in rest_source}
+    rest: Dict[str, object] = {}
+    for key in rest_source:
+        if key not in volatile_keys:
+            rest[key] = rest_source[key]
+    for key in volatile_rest_order:
+        if key in rest_source:
+            rest[key] = rest_source[key]
     parts = [turn_header + "【本回合推演输入 simulator_payload】"]
     parts.extend(tsv_blocks)
     parts.append("## 其余字段（JSON）\n" + json.dumps(rest, ensure_ascii=False, sort_keys=False))

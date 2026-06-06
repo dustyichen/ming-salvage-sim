@@ -14,6 +14,7 @@ import queue
 import random
 import re
 import threading
+import time
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -45,10 +46,12 @@ from ming_sim.session import AUTO_SAVE_PREFIX
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import character_context_with_db, match_minister_from_text
 from ming_sim.registry import NUM_HISTORY_RUNS
+from agno.models.message import Message
 from ming_sim.flows import calc_province_fiscal, compute_budget_lines
 from ming_sim.simulation import build_simulator_payload
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
 from ming_sim.models import Character, LLMConfig
+from ming_sim.token_stats import record_stream_metrics
 from ming_sim import steam_events
 
 WEB_DIST = bundled_path("web", "dist")
@@ -1011,25 +1014,26 @@ class WebGame:
             return f"minister-{minister_name}-turn-{self.state.turn}"
         return registry.session_ids.get(minister_name, f"minister-{minister_name}-turn-{self.state.turn}")
 
-    def _prev_chat_brief(self, minister_name: str) -> str:
-        """跨月补足：agno 本月 session 每月新建（history 为空），本月聊不满 NUM_HISTORY_RUNS 轮时，
-        从 chat_messages 取上月（更早）尾 (N - 本月轮数) 轮纯文本对话补进 user message，
-        凑足滑动窗口。临时召见人物不落 chat_messages，直接跳过。"""
+    def _history_messages(self, minister_name: str) -> List[Message]:
+        """喂 LLM 的对话历史：自己管，从 chat_messages 读最近 NUM_HISTORY_RUNS 轮（跨月连续，
+        含本月已聊轮），按时序正序拼成真 user/assistant 消息列表，作本轮 input 前缀。
+
+        为什么不靠 agno session 自动 history：agno session 的 runs 是整块 JSON blob，读必
+        全量进内存，无法「只拉尾 N runs」。chat_messages 表才能真 LIMIT 分段（不全量进内存）。
+        且自己拼能保证时序——往月在前、本月在后，不受 agno 装配顺序（history 永远排在
+        input 之前）所限。故调用方须对本轮关掉 add_history_to_context，全由这里供历史。
+
+        每条标 from_history=True：agent store_history_messages=False，agno 存 run 前会 scrub
+        掉 from_history 消息 → 注入的历史不二次落 agno session。chat_messages 本就是历史唯一
+        真相（每轮答完即落库），不靠 agno 存。临时召见人物不落 chat_messages，无历史可读。"""
         if not self._persistent_chat_minister(minister_name):
-            return ""
-        cur_turn = int(self.state.turn)
-        cur_rounds = self.db.count_chat_rounds_in_turn(minister_name, cur_turn)
-        need = NUM_HISTORY_RUNS - cur_rounds
-        if need <= 0:
-            return ""
-        rows = self.db.load_prev_chat_rounds(minister_name, cur_turn, need)
-        if not rows:
-            return ""
-        lines = ["【往月奏对（接续此前数月议事，作答时延续此前君臣交流）】"]
+            return []
+        rows = self.db.load_recent_chat_rounds(minister_name, NUM_HISTORY_RUNS)
+        msgs: List[Message] = []
         for r in rows:
-            who = "上" if r["role"] == "user" else "臣"
-            lines.append(f"{who}：{r['content']}")
-        return "\n".join(lines)
+            role = "user" if r["role"] == "user" else "assistant"
+            msgs.append(Message(role=role, content=r["content"], from_history=True))
+        return msgs
 
     def _chat_payload(
         self,
@@ -1080,10 +1084,9 @@ class WebGame:
         if not text:
             raise HTTPException(status_code=400, detail="问话不能为空。")
         # 召对答完才落库（user+minister 一起，见 _chat_payload）；中途退出/异常整轮不落库。
-        # 跨月补足：喂 LLM 的话前置往月奏对；落库 _chat_payload 仍存原始 text（不污染存档）。
-        brief = self._prev_chat_brief(minister_name)
-        augmented = f"{brief}\n\n{text}" if brief else text
-        result = self.session.chat(minister_name, augmented)
+        # 历史自己管：从 chat_messages 读尾 N 轮真历史消息前置喂 LLM，本轮关 agno 自动 history。
+        history = self._history_messages(minister_name)
+        result = self.session.chat(minister_name, text, history_messages=history)
         proposed = None
         if result.proposed_directive is not None:
             d = result.proposed_directive
@@ -1112,11 +1115,15 @@ class WebGame:
         chunks: List[str] = []
         try:
             agent = self.session.registry.get(character)
-            # 跨月补足：喂 LLM 的话前置往月奏对；落库 _chat_payload 仍存原始 text（不污染存档）。
-            brief = self._prev_chat_brief(minister_name)
-            augmented = f"{brief}\n\n{text}" if brief else text
+            # 历史自己管：从 chat_messages 读尾 N 轮真历史消息前置，本月新问作末尾 user message。
+            # 本轮关 agno 自动 history（add_history_to_context=False），全由这里供历史，保证时序。
+            history = self._history_messages(minister_name)
+            run_input: Any = history + [Message(role="user", content=text)] if history else text
             run_output = None
-            stream = agent.run(augmented, stream=True, stream_events=True, yield_run_output=True)
+            stream = agent.run(
+                run_input, stream=True, stream_events=True, yield_run_output=True,
+                add_history_to_context=False,
+            )
             for event in stream:
                 content = getattr(event, "content", None)
                 event_name = getattr(event, "event", "")
@@ -1270,6 +1277,9 @@ class WebGame:
         tools: Optional[List[Any]] = None,
         tool_call_limit: int = 20,
     ) -> Agent:
+        # Keep the first two instruction blocks byte-identical with the season simulator
+        # prefix so provider-side prefix caching can reuse the full board context.
+        simulator_context = build_simulator_context(simulator_payload)
         return Agent(
             name="朝会群臣",
             id="court-chat",
@@ -1283,13 +1293,15 @@ class WebGame:
             ),
             instructions=[
                 self.content.game_world_prompt,
-                build_simulator_context(simulator_payload),
+                simulator_context,
                 self.content.court_chat_agent_prompt,
             ],
             tools=tools or [],
             tool_call_limit=tool_call_limit,
-            add_history_to_context=True,
-            num_history_runs=4,
+            # Court chat already injects monthly history explicitly in the user
+            # payload. Letting Agno add session history again makes the conclusion
+            # run resend the full debate that we also pass in debate_lines.
+            add_history_to_context=False,
             markdown=False,
         )
 
@@ -1312,6 +1324,9 @@ class WebGame:
                 "JSON 结构：{\"continue_debate\": true/false, \"next_speaker\": \"若继续，下一位发言大臣姓名\", \"focus\": \"若继续，下一轮应回应谁、争什么\", \"reason\": \"判断理由\", \"consensus\": \"一致点\", \"conflict\": \"冲突点\"}。",
                 "硬规则：speakers_unique_count < 2 时必须 continue_debate=true。",
                 "若 debate_turns < opening_minimum_turns，必须 continue_debate=true，因为戏剧冲突尚未铺开。",
+                "若 repeated_speakers_count < 2 且 present_ministers 超过 2 人，必须 continue_debate=true；至少两位核心人物要二次发言，才算多轮廷辩。",
+                "若 speakers_unique_count < minimum_unique_speakers，必须 continue_debate=true；已被召入朝会的大臣都属于利益相关者，不能被两三个人垄断，旁人也要插入表态、拆台或补台。",
+                "每一轮廷辩约等于三段：发难、回嘴、第三方压责或原人再追打；不能把每段当一轮。",
                 "若 debate_turns >= maximum_debate_turns，必须 continue_debate=false，交给结论收束。",
                 "若已有清楚一致点：责任归属、钱粮/执行路径、阻力风险、下一步旨意都已被多数大臣接受，则 continue_debate=false，可以提前结论。",
                 "若仍有冲突点：互相甩锅、钱粮来源不明、执行责任不明、派系互攻未决、边防/民生轻重未决，则 continue_debate=true。",
@@ -1365,6 +1380,7 @@ class WebGame:
         payload = {
             "note": "完整游戏盘面在 system 的 simulator_payload 前缀中；本 user payload 只补朝会差异信息。",
             "court_chat_history": history_lines or ["无"],
+            "factions_brief": self.db.faction_report(),
             "present_ministers": roster_lines,
             "emperor_message": text,
             "instruction": "请按系统规定的 <<<臣:大臣姓名>>> 分隔符协议，组织多位在场大臣依次奏对。",
@@ -1391,8 +1407,6 @@ class WebGame:
                 continue
             selected.append(c)
             seen.add(c.name)
-            if len(selected) >= 12:
-                break
         return selected
 
     def court_chat_stream(self, message: str, ministers: List[str]) -> Iterator[Dict[str, Any]]:
@@ -1416,38 +1430,52 @@ class WebGame:
             fallback_speaker = roster[0].name
             replies: List[Dict[str, str]] = []
             emitted_speakers: List[str] = []
+            current_role = "minister"
             current_speaker = ""
             current_content: List[str] = []
             all_chunks: List[str] = []
-            delimiter_re = re.compile(r"<<<臣:([^>\n]+)>>+")
+            delimiter_re = re.compile(r"<<<(臣|帝):([^>\n]+)>>+")
             pending_text = ""
+            court_chat_delta_delay = max(0.0, float(os.environ.get("MING_COURT_CHAT_DELTA_DELAY", "0.09") or "0"))
+
+            def clean_court_chat_fragment(value: str) -> str:
+                text_value = re.sub(r"\s*<<<臣:[^>\n]+>>+\s*", "", str(value or ""))
+                text_value = re.sub(r"\s*<<<帝:[^>\n]+>>+\s*", "", text_value)
+                text_value = re.sub(r"^\s*>+\s*", "", text_value)
+                text_value = re.sub(r"\s*>+\s*$", "", text_value)
+                return text_value
 
             def flush_text(text_part: str) -> Iterator[Dict[str, Any]]:
-                nonlocal current_speaker, current_content
+                nonlocal current_role, current_speaker, current_content
+                text_part = clean_court_chat_fragment(text_part)
                 if not text_part:
                     return
                 if not current_speaker:
+                    current_role = "minister"
                     current_speaker = fallback_speaker
-                    yield {"type": "speaker", "speaker": current_speaker}
-                chunk_size = 4
+                    yield {"type": "speaker", "role": current_role, "speaker": current_speaker}
+                chunk_size = 2
                 for start in range(0, len(text_part), chunk_size):
                     chunk = text_part[start:start + chunk_size]
                     if not chunk:
                         continue
                     current_content.append(chunk)
-                    yield {"type": "delta", "speaker": current_speaker, "content": chunk}
+                    yield {"type": "delta", "role": current_role, "speaker": current_speaker, "content": chunk}
+                    if court_chat_delta_delay:
+                        time.sleep(court_chat_delta_delay)
 
             def finish_current() -> None:
-                nonlocal current_speaker, current_content
-                content = "".join(current_content).strip()
+                nonlocal current_role, current_speaker, current_content
+                content = clean_court_chat_fragment("".join(current_content)).strip()
                 if current_speaker and content:
-                    replies.append({"role": "minister", "speaker": current_speaker, "content": content})
+                    replies.append({"role": current_role, "speaker": current_speaker, "content": content})
+                current_role = "minister"
                 current_speaker = ""
                 current_content = []
 
             def emit_pending(force: bool = False) -> Iterator[Dict[str, Any]]:
                 """Parse minister delimiters incrementally without leaking delimiters as speech."""
-                nonlocal current_speaker, current_content, pending_text
+                nonlocal current_role, current_speaker, current_content, pending_text
                 while pending_text:
                     match = delimiter_re.search(pending_text)
                     if match:
@@ -1456,14 +1484,19 @@ class WebGame:
                             for item in flush_text(before):
                                 yield item
                         finish_current()
-                        speaker = match.group(1).strip()
-                        current_speaker = speaker if speaker in allowed else fallback_speaker
+                        role_marker = match.group(1).strip()
+                        speaker = match.group(2).strip()
+                        current_role = "emperor" if role_marker == "帝" else "minister"
+                        current_speaker = "皇帝" if current_role == "emperor" else (speaker if speaker in allowed else fallback_speaker)
                         current_content = []
-                        yield {"type": "speaker", "speaker": current_speaker}
+                        yield {"type": "speaker", "role": current_role, "speaker": current_speaker}
                         pending_text = pending_text[match.end():]
                         continue
 
-                    marker_start = pending_text.find("<<<臣:")
+                    minister_marker = pending_text.find("<<<臣:")
+                    emperor_marker = pending_text.find("<<<帝:")
+                    marker_candidates = [idx for idx in (minister_marker, emperor_marker) if idx >= 0]
+                    marker_start = min(marker_candidates) if marker_candidates else -1
                     if marker_start >= 0:
                         if marker_start:
                             before = pending_text[:marker_start]
@@ -1492,8 +1525,16 @@ class WebGame:
                         yield item
 
             run_output = None
+            def record_court_stream_metrics(output: Any, tag: str) -> None:
+                if output is None:
+                    return
+                metrics = getattr(output, "metrics", None)
+                model_id = getattr(getattr(agent, "model", None), "id", None) or "stream"
+                record_stream_metrics(str(model_id), metrics, caller_tag=tag)
+
             def run_court_prompt(run_prompt: str) -> Iterator[Dict[str, Any]]:
                 nonlocal pending_text, run_output
+                metrics_recorded = False
                 stream = agent.run(run_prompt, stream=True, stream_events=True, yield_run_output=True)
                 for event in stream:
                     content = getattr(event, "content", None)
@@ -1506,20 +1547,31 @@ class WebGame:
                             yield item
                     if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
                         run_output = event
+                        if not metrics_recorded:
+                            record_court_stream_metrics(run_output, "court-chat")
+                            metrics_recorded = True
 
             def run_agent_text(run_prompt: str) -> str:
                 chunks: List[str] = []
+                text_run_output = None
+                metrics_recorded = False
                 stream = agent.run(run_prompt, stream=True, stream_events=True, yield_run_output=True)
                 for event in stream:
                     content = getattr(event, "content", None)
                     event_name = getattr(event, "event", "")
                     if event_name == "RunContent" and content:
                         chunks.append(str(content))
+                    if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
+                        text_run_output = event
+                        if not metrics_recorded:
+                            record_court_stream_metrics(text_run_output, "court-chat/conclusion")
+                            metrics_recorded = True
                 return "".join(chunks).strip()
 
             def run_directed_speech(speaker: str, run_prompt: str) -> Iterator[Dict[str, Any]]:
                 nonlocal run_output
                 pieces: List[str] = []
+                metrics_recorded = False
                 emitted_speakers.append(speaker)
                 yield {"type": "speaker", "speaker": speaker}
                 stream = agent.run(run_prompt, stream=True, stream_events=True, yield_run_output=True)
@@ -1535,6 +1587,9 @@ class WebGame:
                             yield {"type": "delta", "speaker": speaker, "content": delta[start:start + 4]}
                     if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
                         run_output = event
+                        if not metrics_recorded:
+                            record_court_stream_metrics(run_output, "court-chat")
+                            metrics_recorded = True
                 content = "".join(pieces).strip()
                 if not content and run_output is not None:
                     content = re.sub(r"\s*<<<臣:[^>\n]+>>+\s*", "", extract_agent_text(run_output)).strip()
@@ -1577,6 +1632,89 @@ class WebGame:
                 },
             ]
 
+            game_settings = load_runtime_game()
+            configured_rounds = max(1, min(8, int(game_settings.get("court_chat_debate_rounds", 3) or 3)))
+            target_min_speeches = max(len(roster), configured_rounds * max(3, min(len(roster), 6)))
+            target_max_speeches = max(target_min_speeches + min(len(roster), 6), len(roster) + configured_rounds * 4)
+            script_prompt = (
+                "【朝会整场剧本】\n"
+                f"{prompt}\n"
+                f"本局设置为 {configured_rounds} 轮交锋，目标约 {target_min_speeches}-{target_max_speeches} 段。\n"
+                f"在场大臣：{'、'.join(c.name for c in roster)}。\n"
+                "请靠提示词范例里的默会知识排一整场廷议：谁发难、谁打断、谁回嘴、谁暗伤、谁补台、谁逼皇帝裁断，由你按人物画像和盘面决定。\n"
+                "所有被召入大臣都应参与；至少两人要二次发言形成回嘴。若皇帝发言含【皇帝插话，打断当前廷议并扭转话题】，立刻围绕新御问转向。\n"
+                "不要替皇帝写台词；不要输出分析或旁白；不要输出朝议结论。只按 <<<臣:姓名>>> 分隔符输出群臣台词。"
+            )
+
+            for item in run_court_prompt(script_prompt):
+                yield item
+            for item in emit_pending(force=True):
+                yield item
+            finish_current()
+
+            _dump_llm_messages(run_output, "朝会聊天室", agent=agent)
+            if not replies:
+                yield {"type": "error", "message": "朝会未能形成有效廷辩，请换一组大臣或重试。"}
+                return
+            missing_speakers = [c.name for c in roster if c.name not in {r["speaker"] for r in replies}]
+            if missing_speakers:
+                append_prompt = (
+                    "【朝会补场】刚才整场剧本漏掉了部分已召入朝会的大臣。"
+                    "请只让这些缺席者各补一段，接住前文火候，像临场插话，不要像独立奏疏。"
+                    "只按 <<<臣:姓名>>> 输出台词，不要结论或旁白。\n"
+                    f"缺席大臣：{'、'.join(missing_speakers)}。\n"
+                    f"近期廷辩：\n" + "\n".join(f"{r['speaker']}：{r['content']}" for r in replies[-10:])
+                )
+                pending_text = ""
+                for item in run_court_prompt(append_prompt):
+                    yield item
+                for item in emit_pending(force=True):
+                    yield item
+                finish_current()
+            for reply in replies:
+                self.db.append_court_chat_message(
+                    self.state.turn,
+                    reply["role"],
+                    reply["speaker"],
+                    reply["content"],
+                )
+                yield {"type": "reply", **reply}
+            debate_lines = "\n".join(f"{r['speaker']}：{r['content']}" for r in replies[-18:])
+            conclusion_prompt = (
+                "【朝会结论】现在必须根据刚才整场廷辩给皇帝一个明确结论。"
+                "只输出结论正文，不要分隔符，不要 JSON，不要旁白。"
+                "结论须包含：1 今日主张；2 责任归属；3 阻力/风险；4 下一步可下旨的章程。"
+                "若廷辩未达成一致，也必须给出“冲突性结论”：说明哪几派/哪几部仍争执，"
+                "并列出皇帝可以拍板的两个选项。"
+                "必须承认实际争执，不得把强行压下的冲突写成群臣一致。"
+                "120-220 字，语气像司礼监/内阁把廷议结果呈给皇帝。\n"
+                f"设置轮数：{configured_rounds}；实际发言段数：{len(replies)}；实际发言人：{'、'.join(dict.fromkeys(r['speaker'] for r in replies))}。\n"
+                f"刚才廷辩：\n{debate_lines}"
+            )
+            conclusion = run_agent_text(conclusion_prompt) or "本轮朝议虽未尽合，然争点已明：请陛下择一条主线定旨，并限期各部回奏。"
+            self.db.append_court_chat_message(self.state.turn, "conclusion", "朝议结论", conclusion)
+            option_lines = [
+                line.strip()
+                for line in re.split(r"\n+", conclusion)
+                if re.match(r"^(方案|选项)?[一二三四甲乙丙丁][、.．：:]", line.strip())
+            ]
+            if not option_lines:
+                matches = list(re.finditer(r"(?:方案|选项)?[一二三四甲乙丙丁][、.．：:]", conclusion))
+                for idx, match in enumerate(matches):
+                    end = matches[idx + 1].start() if idx + 1 < len(matches) else len(conclusion)
+                    option = conclusion[match.start():end].strip(" ；;。")
+                    if option:
+                        option_lines.append(option)
+            yield {
+                "type": "conclusion",
+                "role": "conclusion",
+                "speaker": "朝议结论",
+                "content": conclusion,
+                "options": option_lines[:4],
+            }
+            yield {"type": "done", "payload": self.court_chat_history_payload()}
+            return
+
             def judge_debate() -> Dict[str, Any]:
                 transcript = "\n".join(f"{idx + 1}. {r['speaker']}：{r['content']}" for idx, r in enumerate(replies[-12:]))
                 speakers = list(dict.fromkeys(r["speaker"] for r in replies))
@@ -1590,12 +1728,13 @@ class WebGame:
                     "maximum_debate_turns": payload_max_turns,
                     "speakers": speakers,
                     "speakers_unique_count": len(speakers),
+                    "minimum_unique_speakers": minimum_unique_speakers,
                     "repeated_speakers_count": sum(1 for name in set(speakers) if speakers.count(name) >= 2),
                     "emitted_speakers": emitted_speakers,
                     "last_speaker": last_speaker,
                     "alternate_speakers_for_next_opening": alternate_speakers,
                     "transcript": transcript or "无",
-                    "instruction": "判断是否继续廷辩。开场最低冲突未完成前必须继续；若 repeated_speakers_count < 1 且 present_ministers 超过 1 人，也必须继续，因为还没有形成来回。之后若已形成多数一致和可下旨章程，可以提前停止。若仍有冲突，继续轮询到上限。若继续，必须给 next_speaker 和 focus；next_speaker 必须来自 alternate_speakers_for_next_opening（若为空则从 present_ministers 选）。只输出 JSON。",
+                    "instruction": "判断是否继续廷辩。开场最低冲突未完成前必须继续；若 repeated_speakers_count < 2 且 present_ministers 超过 2 人，也必须继续，因为还没有形成多轮来回。若 speakers_unique_count < minimum_unique_speakers，也必须继续，因为已被召入朝会的大臣都属于利益相关者，不能被少数人垄断。注意每一轮约等于三段发言：发难、回嘴、第三方压责或旁人插入；不能把每段当一轮。之后若已形成多数一致和可下旨章程，可以提前停止。若仍有冲突，继续轮询到上限。若继续，必须给 next_speaker 和 focus；next_speaker 必须来自 alternate_speakers_for_next_opening（若为空则从 present_ministers 选）。只输出 JSON。",
                 }
                 raw = extract_agent_text(judge_agent.run("【朝会裁断输入】\n" + json.dumps(payload, ensure_ascii=False, indent=2))).strip()
                 match = re.search(r"\{.*\}", raw, re.S)
@@ -1616,16 +1755,92 @@ class WebGame:
 
             game_settings = load_runtime_game()
             configured_rounds = max(1, min(8, int(game_settings.get("court_chat_debate_rounds", 3) or 3)))
-            speeches_per_round = 2 if len(roster) > 1 else 1
-            max_debate_turns = min(24, max(4 if len(roster) > 1 else 1, configured_rounds * speeches_per_round))
-            opening_minimum_turns = min(max_debate_turns, max(4 if len(roster) > 1 else 1, speeches_per_round))
+            speeches_per_round = min(max(3, len(roster)), 12) if len(roster) > 2 else (2 if len(roster) > 1 else 1)
+            min_debate_turns = configured_rounds * speeches_per_round
+            max_debate_turns = max(4 if len(roster) > 1 else 1, len(roster), min_debate_turns + min(len(roster), speeches_per_round))
+            opening_minimum_turns = min(max_debate_turns, max(4 if len(roster) > 1 else 1, min_debate_turns))
             payload_max_turns = max_debate_turns
+            minimum_unique_speakers = len(roster)
+
+            def mentioned_minister_targets(content: str, last_speaker: str, direct_only: bool = False) -> List[str]:
+                """Pick ministers who were just named or pressed by office title, so they can answer."""
+                targets: List[str] = []
+                if not content:
+                    return targets
+                pressure_context = any(
+                    word in content
+                    for word in ("当面", "回话", "说明", "说清", "具奏", "具结", "担责", "负责", "责成", "限", "请", "须", "能否", "不得", "查", "押发", "问罪", "弹劾")
+                )
+                for c in roster:
+                    if c.name == last_speaker:
+                        continue
+                    office = c.office or ""
+                    office_type = c.office_type or ""
+                    surname = c.name[:1]
+                    title_hits = list(c.aliases or [])
+                    if "尚书" in office:
+                        title_hits.append(f"{surname}尚书")
+                    if "侍郎" in office:
+                        title_hits.append(f"{surname}侍郎")
+                    if "阁" in office or "大学士" in office or "内阁" in office:
+                        title_hits.extend([f"{surname}阁老", f"{surname}阁臣", f"{surname}辅臣"])
+                    if "巡抚" in office:
+                        title_hits.append(f"{surname}巡抚")
+                    if "总督" in office:
+                        title_hits.append(f"{surname}督臣")
+                    if "总兵" in office:
+                        title_hits.append(f"{surname}总兵")
+                    if c.name in content or any(hit and hit in content for hit in title_hits):
+                        targets.append(c.name)
+                        continue
+                    if direct_only or not pressure_context:
+                        continue
+                    office_hits = [office_type] if office_type else []
+                    if office_type == "户部":
+                        office_hits.extend(["户部", "度支"])
+                    elif office_type == "兵部":
+                        office_hits.extend(["兵部", "军令", "押发"])
+                    elif office_type == "吏部":
+                        office_hits.extend(["吏部", "考成", "黜陟"])
+                    elif office_type == "刑部":
+                        office_hits.extend(["刑部", "法司", "问罪"])
+                    elif office_type == "都察院":
+                        office_hits.extend(["都察院", "台谏", "御史", "弹劾"])
+                    elif office_type == "内阁":
+                        office_hits.extend(["内阁", "票拟", "阁臣", "辅臣"])
+                    if any(hit and hit in content for hit in office_hits):
+                        targets.append(c.name)
+                return targets
 
             def scripted_speaker(speech_index: int, last_speaker: str) -> str:
                 if len(roster) == 1:
                     return roster[0].name
-                # 前几段必须制造“来回”：A 立论，B 压责，A 回应，C 插入，B 再回咬。
-                script = [0, 1, 0, 2, 1, 3, 0, 2]
+                if replies:
+                    for target in mentioned_minister_targets(replies[-1]["content"], last_speaker, direct_only=True):
+                        return target
+                spoken_counts = {c.name: 0 for c in roster}
+                for reply in replies:
+                    if reply["speaker"] in spoken_counts:
+                        spoken_counts[reply["speaker"]] += 1
+                unique_count = sum(1 for count in spoken_counts.values() if count > 0)
+                if unique_count < minimum_unique_speakers and speech_index >= 2:
+                    underused = [
+                        c.name for c in roster
+                        if c.name != last_speaker and spoken_counts.get(c.name, 0) == 0
+                    ]
+                    if not underused:
+                        min_count = min(count for name, count in spoken_counts.items() if name != last_speaker)
+                        underused = [
+                            name for name, count in spoken_counts.items()
+                            if name != last_speaker and count == min_count
+                        ]
+                    if underused:
+                        return underused[0]
+                if replies:
+                    for target in mentioned_minister_targets(replies[-1]["content"], last_speaker):
+                        return target
+                # 前两段先立论/压责；之后优先让未发言利益相关者插入，再回到核心人物追打。
+                script = [0, 1]
                 if speech_index < len(script):
                     candidate = roster[script[speech_index] % len(roster)].name
                     if candidate != last_speaker:
@@ -1642,7 +1857,8 @@ class WebGame:
             judge = judge_debate()
             while len(replies) < max_debate_turns and (
                 len(replies) < opening_minimum_turns
-                or sum(1 for name in set(r["speaker"] for r in replies) if [r["speaker"] for r in replies].count(name) >= 2) < (1 if len(roster) > 1 else 0)
+                or sum(1 for name in set(r["speaker"] for r in replies) if [r["speaker"] for r in replies].count(name) >= 2) < (2 if len(roster) > 2 else (1 if len(roster) > 1 else 0))
+                or len(set(r["speaker"] for r in replies)) < minimum_unique_speakers
                 or judge.get("continue_debate")
             ):
                 pending_text = ""
@@ -1662,10 +1878,11 @@ class WebGame:
                 forced_phase = len(replies) < opening_minimum_turns
                 continuation = (
                     "【朝会导演拍点】"
-                    f"当前第 {speech_index + 1} 段，开场最低冲突 {opening_minimum_turns} 段，最多 {max_debate_turns} 段。"
-                    + ("未完成开场冲突，不得总结，不得停。" if forced_phase else "若已有一致，可朝收束推进；若仍有冲突，继续激化冲突。")
+                    f"当前第 {speech_index + 1} 段，当前约第 {speech_index // speeches_per_round + 1} 轮；本局设置为 {configured_rounds} 轮，最低 {opening_minimum_turns} 段，最多 {max_debate_turns} 段。"
+                    + ("未完成设置轮次，不得总结，不得停。" if forced_phase else "若已有一致，可朝收束推进；若仍有冲突，继续激化冲突。")
                     + f"{prompt}\n"
                     f"本段演员画像：{character_context_with_db(speaker_character, self.db)}。\n"
+                    f"当前派系盘面：{self.db.faction_report()}。\n"
                     f"本段剧本拍点：{beat['name']}。\n"
                     f"戏剧压力：{beat['goal']}\n"
                     f"可选动作：{beat['move']}\n"
@@ -1679,7 +1896,11 @@ class WebGame:
                     f"近期廷辩原文：\n{recent_transcript}\n"
                     f"在场大臣只能使用：{'、'.join(allowed)}。\n"
                     + (f"{next_speaker} 已经发过言，本段必须回应别人对他的责难、修正前议或反咬对方，不得重复第一次立场。\n" if any(r["speaker"] == next_speaker for r in replies) else "")
-                    + "本次只输出 1 段短发言，35-120 字。必须先符合本段演员画像，再处理戏剧压力。"
+                    + "你现在是专业话剧编剧兼演员。输出前先在内部完成“先编再演”草稿：一、整场戏当前核心冲突是什么；二、本段在戏里承担什么功能（发难/接锅/自辩/反咬/救场/补台/设限/逼宫/收束）；三、本段演员按官署/派系/忠诚/清廉/胆略最想保什么；四、上一段谁把什么责任压给了谁；五、本段具体利益动作是什么；六、本段说完要把哪个钩子留给下一位；七、把草稿压缩成一句朝堂台词。草稿绝不能输出。"
+                    "本次只输出 1 段短发言，35-120 字。必须先符合本段演员画像，再处理戏剧压力。"
+                    "本段必须先为该人物所属派系/官署争取一个具体利益或规避一个具体责任；不能只提出中性好政策。"
+                    "本段必须有戏剧功能，不能只是回答皇帝问题；台词里要能听出他在抢权、护账、甩锅、逼数、挡刀、拆台、补台或求皇帝拍板。"
+                    "不得点名要求非在场大臣当面回话；若关键官员不在场，只能请陛下另召或责成其限期具本。"
                     "若不是第一段，要回应上一段具体话头；可以反驳，也可以补台、暗讽、设限、转移责任或折中。"
                     "不要机械使用尖锐词；只有当该人物的官署、派系、胆略和风格支持时，才公开撕破脸。"
                     "只输出正文，不要分隔符，不要 JSON，不要旁白，不要写姓名。"
@@ -1708,15 +1929,35 @@ class WebGame:
                 "结论须包含：1 今日主张；2 责任归属；3 阻力/风险；4 下一步可下旨的章程。"
                 "若廷辩未达成一致或已到达交锋上限，也必须给出“冲突性结论”：说明哪几派/哪几部仍争执，"
                 "并列出皇帝可以拍板的两个选项，不要继续要求廷辩。"
+                "若刚才廷辩中最后一段提出了新方案、新责任或新分配，而相关方尚未回应，必须写成冲突性结论，不得写成已经一致。"
                 "不得声称只有一人独奏，除非 transcript 确实只有一位 speaker。"
                 "80-160 字，语气像司礼监/内阁把廷议结果呈给皇帝。\n"
                 f"是否到达交锋上限：{reached_limit}。\n"
+                f"设置轮数：{configured_rounds}；实际发言段数：{len(replies)}。\n"
                 f"裁断最后意见：{json.dumps(judge, ensure_ascii=False)}。\n"
                 f"刚才廷辩：\n{debate_lines}"
             )
             conclusion = run_agent_text(conclusion_prompt) or "本轮朝议虽未尽合，然争点已明：请陛下择一条主线定旨，并限期各部回奏。"
             self.db.append_court_chat_message(self.state.turn, "conclusion", "朝议结论", conclusion)
-            yield {"type": "conclusion", "role": "conclusion", "speaker": "朝议结论", "content": conclusion}
+            option_lines = [
+                line.strip()
+                for line in re.split(r"\n+", conclusion)
+                if re.match(r"^(方案|选项)?[一二三四甲乙丙丁][、.．：:]", line.strip())
+            ]
+            if not option_lines:
+                matches = list(re.finditer(r"(?:方案|选项)?[一二三四甲乙丙丁][、.．：:]", conclusion))
+                for idx, match in enumerate(matches):
+                    end = matches[idx + 1].start() if idx + 1 < len(matches) else len(conclusion)
+                    option = conclusion[match.start():end].strip(" ；;。")
+                    if option:
+                        option_lines.append(option)
+            yield {
+                "type": "conclusion",
+                "role": "conclusion",
+                "speaker": "朝议结论",
+                "content": conclusion,
+                "options": option_lines[:4],
+            }
             yield {"type": "done", "payload": self.court_chat_history_payload()}
         except Exception as error:
             if isinstance(error, LLMUnavailable):
@@ -2311,6 +2552,7 @@ async def api_court_chat_stream(request: CourtChatRequest) -> StreamingResponse:
                     "role": "conclusion",
                     "speaker": item.get("speaker", "朝议结论"),
                     "content": item.get("content", ""),
+                    "options": item.get("options", []),
                 })
             elif item_type == "speaker":
                 yield sse_event("speaker", {"speaker": item.get("speaker", "")})

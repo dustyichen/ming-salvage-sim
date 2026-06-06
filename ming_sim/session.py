@@ -10,7 +10,9 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from agno.models.message import Message
 
 from ming_sim.agents import bind_content as _bind_agents
 from ming_sim.agents import _dump_llm_messages
@@ -549,10 +551,19 @@ class GameSession:
         }.get(status, status)
         return (False, f"{character.name}{label}，无法召见。" + (reason or ""))
 
-    def chat(self, minister_name: str, message: str) -> ChatTurnResult:
+    def chat(
+        self,
+        minister_name: str,
+        message: str,
+        history_messages: Optional[List["Message"]] = None,
+    ) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
         大臣 propose_directive 产生的草案以 status='pending' 入库，
-        作为 proposed_directive 返回，确认/驳回由调用方下达。"""
+        作为 proposed_directive 返回，确认/驳回由调用方下达。
+
+        history_messages：调用方自管的对话历史（真 user/assistant 消息，标 from_history，
+        跨月连续按时序）。作本轮 input 前缀，本月新问/记忆/草案只拼到末尾这条新 user message。
+        给了它就对本轮关 agno 自动 history（add_history_to_context=False），避免重复/时序倒置。"""
         if self.registry is None:
             raise RuntimeError("GameSession.begin_turn() 未调用。")
         character = self._character(minister_name)
@@ -565,7 +576,14 @@ class GameSession:
         draft_line = self.registry.build_draft_line()
         if draft_line and draft_line != "无":
             augmented = f"【本{TURN_UNIT}已核定草案】{draft_line}\n\n{augmented}"
-        run_output = agent.run(augmented)
+        # 历史作前缀按 role 排列，本月新问是末尾这条 user message（draft/记忆只挂在它上）。
+        # agno 的 List[Message] input 分支只收 Message/dict，混入 str 会被静默丢弃，故本月新问
+        # 也包成 Message（不标 from_history → 正常入 agno run）。本轮关 agno 自动 history。
+        if history_messages:
+            run_input: Any = list(history_messages) + [Message(role="user", content=augmented)]
+            run_output = agent.run(run_input, add_history_to_context=False)
+        else:
+            run_output = agent.run(augmented)
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
         answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)

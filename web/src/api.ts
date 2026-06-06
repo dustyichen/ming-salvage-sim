@@ -114,11 +114,13 @@ export const streamCourtChat = async (
   onDelta?: (speaker: string, delta: string) => void,
   onSpeaker?: (speaker: string) => void,
   onConclusion?: (message: CourtChatMessage) => void,
+  signal?: AbortSignal,
 ): Promise<CourtChatResponse> => {
   const response = await fetch("/api/court_chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, ministers }),
+    signal,
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: response.statusText }));

@@ -62,8 +62,10 @@ function App() {
   const [courtChatPanelOpen, setCourtChatPanelOpen] = React.useState(false);
   const [courtChatLiveMessages, setCourtChatLiveMessages] = React.useState<CourtChatMessage[]>([]);
   const [courtChatSelectedMinisters, setCourtChatSelectedMinisters] = React.useState<string[]>([]);
+  const [courtChatDecision, setCourtChatDecision] = React.useState<CourtChatMessage | null>(null);
   const courtChatDeltaQueueRef = React.useRef<{ speaker: string; delta: string }[]>([]);
   const courtChatDrainTimerRef = React.useRef<number | null>(null);
+  const courtChatAbortRef = React.useRef<AbortController | null>(null);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
   const [directiveText, setDirectiveText] = React.useState("");
@@ -135,16 +137,18 @@ function App() {
 
   const appendCourtChatDelta = React.useCallback((speaker: string, delta: string) => {
     if (!speaker || !delta) return;
-    setCourtChatBubbles((current) => ({ ...current, [speaker]: `${(current[speaker] || "")}${delta}`.slice(-42) }));
+    const cleanDelta = delta.replace(/^\s*>+\s*/, "").replace(/\s*>+\s*$/, "");
+    if (!cleanDelta) return;
+    setCourtChatBubbles((current) => ({ ...current, [speaker]: `${(current[speaker] || "")}${cleanDelta}`.slice(-42) }));
     setCourtChatLiveMessages((current) => {
       const next = [...current];
       const last = next[next.length - 1];
       if (last && last.role === "minister" && last.speaker === speaker) {
-        const content = `${last.content || ""}${delta}`.replace(/^\s+/, "");
+        const content = `${last.content || ""}${cleanDelta}`.replace(/^\s+/, "");
         next[next.length - 1] = { ...last, content, displayContent: content };
         return next;
       }
-      const content = delta.replace(/^\s+/, "");
+      const content = cleanDelta.replace(/^\s+/, "");
       return [...next, { role: "minister", speaker, content, displayContent: content }];
     });
   }, []);
@@ -155,7 +159,7 @@ function App() {
       appendCourtChatDelta(next.speaker, next.delta);
     }
     if (courtChatDeltaQueueRef.current.length) {
-      courtChatDrainTimerRef.current = window.setTimeout(drainCourtChatDeltas, 24);
+      courtChatDrainTimerRef.current = window.setTimeout(drainCourtChatDeltas, 85);
     } else {
       courtChatDrainTimerRef.current = null;
     }
@@ -165,7 +169,7 @@ function App() {
     if (!speaker || !delta) return;
     courtChatDeltaQueueRef.current.push({ speaker, delta });
     if (courtChatDrainTimerRef.current === null) {
-      courtChatDrainTimerRef.current = window.setTimeout(drainCourtChatDeltas, 24);
+      courtChatDrainTimerRef.current = window.setTimeout(drainCourtChatDeltas, 85);
     }
   }, [drainCourtChatDeltas]);
 
@@ -521,7 +525,6 @@ function App() {
   };
 
   const sendCourtChat = async (visibleMinisters: Minister[]) => {
-    if (courtChatBusy) return;
     const message = courtChatInput.trim();
     if (!message) return;
     const speakers = visibleMinisters
@@ -531,6 +534,13 @@ function App() {
       setCourtChatError("朝堂当前没有可参与朝议的大臣。");
       return;
     }
+    const isInterjection = courtChatBusy;
+    if (isInterjection && courtChatAbortRef.current) {
+      courtChatAbortRef.current.abort();
+      courtChatAbortRef.current = null;
+    }
+    const abortController = new AbortController();
+    courtChatAbortRef.current = abortController;
     setCourtChatBusy(true);
     setCourtChatError("");
     setCourtChatInput("");
@@ -540,12 +550,16 @@ function App() {
       courtChatDrainTimerRef.current = null;
     }
     courtChatDeltaQueueRef.current = [];
+    setCourtChatDecision(null);
     setCourtChatPanelOpen(true);
-    setCourtChatLiveMessages((current) => [...current, { role: "emperor", speaker: "皇帝", content: message, displayContent: message }]);
+    setCourtChatLiveMessages((current) => [
+      ...current,
+      { role: "emperor", speaker: "皇帝", content: isInterjection ? `朕打断一句：${message}` : message, displayContent: isInterjection ? `朕打断一句：${message}` : message },
+    ]);
     setCourtChatHistory((current) => [...current, { role: "emperor", speaker: "皇帝", content: message }]);
     try {
       const data = await streamCourtChat(
-        message,
+        isInterjection ? `【皇帝插话，打断当前廷议并扭转话题】${message}` : message,
         speakers,
         () => {},
         (speaker, delta) => {
@@ -564,19 +578,26 @@ function App() {
         (conclusion) => {
           flushCourtChatDeltas();
           setCourtChatLiveMessages((current) => [...current, { ...conclusion, role: "conclusion" }]);
+          setCourtChatDecision(conclusion.options?.length ? conclusion : null);
         },
+        abortController.signal,
       );
+      if (abortController.signal.aborted) return;
       flushCourtChatDeltas();
       setCourtChatHistory(data.history || []);
       window.setTimeout(() => {
         setCourtChatBubbles({});
       }, 7000);
     } catch (err) {
+      if (abortController.signal.aborted) return;
       flushCourtChatDeltas();
       setCourtChatInput(message);
       setCourtChatError(err instanceof Error ? err.message : String(err));
     } finally {
-      setCourtChatBusy(false);
+      if (courtChatAbortRef.current === abortController) {
+        courtChatAbortRef.current = null;
+        setCourtChatBusy(false);
+      }
     }
   };
 
@@ -595,6 +616,30 @@ function App() {
       setState((current) => (current ? { ...current, directives: data.directives } : current));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const chooseCourtChatDecision = async (option: string) => {
+    if (!option.trim()) return;
+    setBusy("登记朝议裁断");
+    setError("");
+    try {
+      const data = await api<{ directives: Directive[] }>("/api/directives", {
+        method: "POST",
+        body: JSON.stringify({
+          text: `朝会裁断：${option.trim()}`,
+          notes: "由本月朝会结论转入草案",
+        }),
+      });
+      setState((current) => (current ? { ...current, directives: data.directives } : current));
+      setCourtChatDecision(null);
+      setCourtChatPanelOpen(false);
+      setDrawerOpen(false);
+      setActiveModal("edict");
+    } catch (err) {
+      setCourtChatError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy("");
     }
@@ -1000,12 +1045,14 @@ function App() {
         courtChatBubbles={courtChatBubbles}
         courtChatPanelOpen={courtChatPanelOpen}
         courtChatLiveMessages={courtChatLiveMessages}
+        courtChatDecision={courtChatDecision}
         courtChatSelectedMinisters={courtChatSelectedMinisters}
         onCourtChatSelectedMinistersChange={setCourtChatSelectedMinisters}
         onCourtChatInputChange={setCourtChatInput}
         onSendCourtChat={sendCourtChat}
         onRefreshCourtChat={refreshCourtChatWithError}
         onCloseCourtChatPanel={() => setCourtChatPanelOpen(false)}
+        onChooseCourtChatDecision={chooseCourtChatDecision}
       />
 
       <HaremDrawer
