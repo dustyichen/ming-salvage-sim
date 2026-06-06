@@ -164,3 +164,16 @@ export const streamCourtChat = async (
 
   throw new Error("朝会流式回复中断，未收到完成事件。");
 };
+
+export const summarizeCourtChat = async (messages: CourtChatMessage[]): Promise<CourtChatMessage> => {
+  return api<CourtChatMessage>("/api/court_chat/summary", {
+    method: "POST",
+    body: JSON.stringify({
+      messages: messages.map((message) => ({
+        role: message.role,
+        speaker: message.speaker,
+        content: message.displayContent ?? message.content,
+      })),
+    }),
+  });
+};

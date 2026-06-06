@@ -335,6 +335,16 @@ class CourtChatRequest(BaseModel):
     ministers: List[str] = Field(default_factory=list)
 
 
+class CourtChatSummaryMessage(BaseModel):
+    role: str
+    speaker: str
+    content: str
+
+
+class CourtChatSummaryRequest(BaseModel):
+    messages: List[CourtChatSummaryMessage] = Field(default_factory=list)
+
+
 class DirectiveRequest(BaseModel):
     text: str
     notes: str = ""
@@ -1356,6 +1366,93 @@ class WebGame:
         }
         return "【朝会群聊输入】\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
+    def _parse_court_conclusion(self, raw: str) -> Dict[str, Any]:
+        decision_match = re.search(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", raw or "", re.DOTALL)
+        conclusion = re.sub(r"<<DECISION>>.*?<<END>>", "", raw or "", flags=re.DOTALL).strip()
+        option_lines: List[str] = []
+        if decision_match:
+            try:
+                decision_obj = json.loads(decision_match.group(1))
+            except json.JSONDecodeError:
+                decision_obj = None
+            if isinstance(decision_obj, dict):
+                for item in decision_obj.get("options") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    label = str(item.get("label") or "").strip()
+                    if label:
+                        option_lines.append(label)
+        return {"content": conclusion, "options": option_lines[:3]}
+
+    def _court_conclusion_prompt(
+        self,
+        debate_lines: str,
+        *,
+        configured_rounds: Optional[int] = None,
+        actual_speech_count: Optional[int] = None,
+        actual_speakers: Optional[List[str]] = None,
+        visible_only: bool = False,
+    ) -> str:
+        source_label = "玩家屏幕上已经显示出来的廷辩" if visible_only else "刚才整场廷辩"
+        guard = (
+            "严禁引用、推断或补充任何未列出的后续发言、后台历史、月度朝会历史或模型记忆；"
+            "不要让任何大臣继续奏对，不要使用 <<<臣:姓名>>> 分隔符。\n"
+            if visible_only else ""
+        )
+        body_fields = (
+            "1 已出现的主张；2 已出现的分歧；3 已出现的可行章程；4 仍需皇帝裁断之处。"
+            "若材料不足，就明确说材料尚不足，只归纳已见内容。"
+            if visible_only else
+            "1 今日主张；2 责任归属；3 阻力/风险；4 下一步可下旨的章程，"
+            "语气像司礼监/内阁把廷议结果呈给皇帝；正文不要分隔符、不要 JSON、不要旁白。"
+        )
+        option_rule = (
+            "options 给 1-2 个『继续追问/暂缓裁断/命某部补报』这类可执行方案。"
+            if visible_only else
+            "options 须 2-3 项且彼此互斥（选了一项即否定他项的路子），"
+        )
+        meta = ""
+        if configured_rounds is not None and actual_speech_count is not None and actual_speakers is not None:
+            meta = (
+                f"设置轮数：{configured_rounds}；实际发言段数：{actual_speech_count}；"
+                f"实际发言人：{'、'.join(actual_speakers)}。\n"
+            )
+        return (
+            f"【朝会结论】现在必须根据{source_label}给皇帝一个明确结论。"
+            f"{guard}"
+            f"先输出 120-220 字结论正文：须含 {body_fields}\n"
+            "正文之后，另起一行输出一个 <<DECISION>>{...}<<END>> JSON 块，"
+            "给皇帝 2-3 个可直接拍板的完整方案（不是结论摘要，也不是只言片语）：\n"
+            '{"title":"≤12字本场抉择名","context":"为何此刻必须皇帝亲断（30-60字）",'
+            '"options":[{"label":"完整可下旨的方案，须含谁来办、办什么、用什么资源/章程，能直接当圣旨正文用","hint":"此案倾向性后果，不写具体数值"}]}\n'
+            f"{option_rule}"
+            "label 必须是一句完整可执行的旨意（如「命户部即拨银十万两解陕赈灾，由毕自严督办，三月内回奏」），"
+            "不得是半句话、不得是「一、命...」这类编号片段、不得需要拼接前文才能懂。\n"
+            "若廷辩已有共识，options 给该方案及其一两个变体（轻重/缓急/经办人不同）；"
+            "若仍冲突，options 须覆盖各派真实主张，不得各打五十大板含糊带过。\n"
+            f"{meta}"
+            f"{'屏幕可见发言' if visible_only else '刚才廷辩'}：\n{debate_lines}"
+        )
+
+    def _run_court_conclusion(self, agent: Agent, prompt: str, runner: Any) -> Dict[str, Any]:
+        fallback = (
+            "本轮朝议虽未尽合，然争点已明：请陛下择一条主线定旨，并限期各部回奏。"
+            '\n<<DECISION>>{"title":"朝议未决","context":"群臣争执未休，需陛下亲断方向。",'
+            '"options":[{"label":"命内阁会同各部三日内拟出统一章程具奏，逾期问责","hint":"稳妥但费时，恐误事机"},'
+            '{"label":"陛下当殿点将拍板，责成一人专办，馀者协办","hint":"决断果敢，然恐压服不服，留下后患"}]}<<END>>'
+        )
+        conclusion_raw = runner(prompt) or fallback
+        parsed = self._parse_court_conclusion(conclusion_raw)
+        if not parsed["content"]:
+            parsed["content"] = "屏幕可见发言尚不足以形成完整朝议结论。"
+        return {
+            "type": "conclusion",
+            "role": "conclusion",
+            "speaker": "朝议结论",
+            "content": parsed["content"],
+            "options": parsed["options"],
+        }
+
     def _active_court_ministers(self, requested: List[str]) -> List[Character]:
         selected: List[Character] = []
         seen: set[str] = set()
@@ -1648,51 +1745,15 @@ class WebGame:
                 )
                 yield {"type": "reply", **reply}
             debate_lines = "\n".join(f"{r['speaker']}：{r['content']}" for r in replies[-18:])
-            conclusion_prompt = (
-                "【朝会结论】现在必须根据刚才整场廷辩给皇帝一个明确结论。"
-                "先输出 120-220 字结论正文：须含 1 今日主张；2 责任归属；3 阻力/风险；4 下一步可下旨的章程，"
-                "语气像司礼监/内阁把廷议结果呈给皇帝；正文不要分隔符、不要 JSON、不要旁白。\n"
-                "正文之后，另起一行输出一个 <<DECISION>>{...}<<END>> JSON 块，"
-                "给皇帝 2-3 个可直接拍板的完整方案（不是结论摘要，也不是只言片语）：\n"
-                '{"title":"≤12字本场抉择名","context":"为何此刻必须皇帝亲断（30-60字）",'
-                '"options":[{"label":"完整可下旨的方案，须含谁来办、办什么、用什么资源/章程，能直接当圣旨正文用","hint":"此案倾向性后果，不写具体数值"}]}\n'
-                "options 须 2-3 项且彼此互斥（选了一项即否定他项的路子），"
-                "label 必须是一句完整可执行的旨意（如「命户部即拨银十万两解陕赈灾，由毕自严督办，三月内回奏」），"
-                "不得是半句话、不得是「一、命...」这类编号片段、不得需要拼接前文才能懂。\n"
-                "若廷辩已有共识，options 给该方案及其一两个变体（轻重/缓急/经办人不同）；"
-                "若仍冲突，options 须覆盖各派真实主张，不得各打五十大板含糊带过。\n"
-                f"设置轮数：{configured_rounds}；实际发言段数：{len(replies)}；实际发言人：{'、'.join(dict.fromkeys(r['speaker'] for r in replies))}。\n"
-                f"刚才廷辩：\n{debate_lines}"
+            conclusion_prompt = self._court_conclusion_prompt(
+                debate_lines,
+                configured_rounds=configured_rounds,
+                actual_speech_count=len(replies),
+                actual_speakers=list(dict.fromkeys(r["speaker"] for r in replies)),
             )
-            conclusion_raw = run_agent_text(conclusion_prompt) or (
-                "本轮朝议虽未尽合，然争点已明：请陛下择一条主线定旨，并限期各部回奏。"
-                '\n<<DECISION>>{"title":"朝议未决","context":"群臣争执未休，需陛下亲断方向。",'
-                '"options":[{"label":"命内阁会同各部三日内拟出统一章程具奏，逾期问责","hint":"稳妥但费时，恐误事机"},'
-                '{"label":"陛下当殿点将拍板，责成一人专办，馀者协办","hint":"决断果敢，然恐压服不服，留下后患"}]}<<END>>'
-            )
-            decision_match = re.search(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", conclusion_raw, re.DOTALL)
-            conclusion = re.sub(r"<<DECISION>>.*?<<END>>", "", conclusion_raw, flags=re.DOTALL).strip()
-            option_lines: List[str] = []
-            if decision_match:
-                try:
-                    decision_obj = json.loads(decision_match.group(1))
-                except json.JSONDecodeError:
-                    decision_obj = None
-                if isinstance(decision_obj, dict):
-                    for item in decision_obj.get("options") or []:
-                        if not isinstance(item, dict):
-                            continue
-                        label = str(item.get("label") or "").strip()
-                        if label:
-                            option_lines.append(label)
-            self.db.append_court_chat_message(self.state.turn, "conclusion", "朝议结论", conclusion)
-            yield {
-                "type": "conclusion",
-                "role": "conclusion",
-                "speaker": "朝议结论",
-                "content": conclusion,
-                "options": option_lines[:3],
-            }
+            conclusion_item = self._run_court_conclusion(agent, conclusion_prompt, run_agent_text)
+            self.db.append_court_chat_message(self.state.turn, "conclusion", "朝议结论", conclusion_item["content"])
+            yield conclusion_item
             yield {"type": "done", "payload": self.court_chat_history_payload()}
             return
         except Exception as error:
@@ -1700,6 +1761,38 @@ class WebGame:
                 yield {"type": "error", "detail": _llm_error_detail(error)}
             else:
                 yield {"type": "error", "message": str(error)}
+
+    def court_chat_summary(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
+        visible_lines: List[str] = []
+        for message in messages[-40:]:
+            role = str(message.get("role") or "")
+            speaker = str(message.get("speaker") or "").strip() or ("皇帝" if role == "emperor" else "未知")
+            content = str(message.get("content") or "").strip()
+            if not content:
+                continue
+            if role not in {"emperor", "minister", "conclusion"}:
+                continue
+            visible_lines.append(f"{speaker}：{content}")
+        if not visible_lines:
+            raise HTTPException(status_code=400, detail="当前屏幕没有可总结的朝会内容。")
+
+        simulator_payload = self._court_simulator_payload()
+        agent = self._court_chat_agent(simulator_payload)
+        prompt = self._court_conclusion_prompt("\n".join(visible_lines), visible_only=True)
+
+        def run_visible_summary(run_prompt: str) -> str:
+            run_output = agent.run(run_prompt)
+            _dump_llm_messages(run_output, "朝会可见总结", agent=agent)
+            return extract_agent_text(run_output).strip()
+
+        conclusion_item = self._run_court_conclusion(agent, prompt, run_visible_summary)
+        self.db.append_court_chat_message(self.state.turn, "conclusion", "朝议结论", conclusion_item["content"])
+        return {
+            "role": "conclusion",
+            "speaker": "朝议结论",
+            "content": conclusion_item["content"],
+            "options": conclusion_item["options"],
+        }
 
     def suggestions_for(self, character: Character) -> List[Dict[str, str]]:
         suggestions = [
@@ -2311,6 +2404,15 @@ async def api_court_chat_stream_alias(request: CourtChatRequest) -> StreamingRes
     return await api_court_chat_stream(request)
 
 
+@app.post("/api/court_chat/summary")
+async def api_court_chat_summary(request: CourtChatSummaryRequest) -> Dict[str, Any]:
+    messages = [
+        {"role": m.role, "speaker": m.speaker, "content": m.content}
+        for m in request.messages
+    ]
+    return get_game().court_chat_summary(messages)
+
+
 @app.post("/api/directives")
 async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
     if not request.text.strip():
@@ -2361,10 +2463,15 @@ async def api_reject_directive(directive_id: int) -> Dict[str, Any]:
     }
 
 
+class WriteDecreeRequest(BaseModel):
+    force: bool = False
+
+
 @app.post("/api/decree/write")
-async def api_write_decree() -> Dict[str, Any]:
+async def api_write_decree(request: WriteDecreeRequest = WriteDecreeRequest()) -> Dict[str, Any]:
     try:
-        decree = get_game().session.write_decree()
+        existing = (get_game().session.last_decree or "").strip()
+        decree = get_game().session.write_decree() if request.force or not existing else existing
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     return {"decree": decree}

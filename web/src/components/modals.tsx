@@ -736,6 +736,7 @@ export function EdictModal({
   onSaveDirective,
   onDeleteDirective,
   onWriteDecree,
+  onRewriteDecree,
   onSaveDecree,
   onResetDecree,
   onIssueDecree,
@@ -760,6 +761,7 @@ export function EdictModal({
   onSaveDirective: (directive: Directive) => void;
   onDeleteDirective: (directiveId: number) => void;
   onWriteDecree: () => void;
+  onRewriteDecree: () => void;
   onSaveDecree: (text: string) => void;
   onResetDecree: () => void;
   onIssueDecree: () => void;
@@ -768,20 +770,29 @@ export function EdictModal({
   onConfirmAllDirectives: () => void;
   onGoToCourtChat: () => void;
 }) {
-  const pendingDirectives = state.directives.filter((d) => d.status === "pending");
-  const draftDirectives = state.directives.filter((d) => d.status !== "pending");
-  const allDirectives = [...pendingDirectives, ...draftDirectives];
+  const pendingDirectives = React.useMemo(() => state.directives.filter((d) => d.status === "pending"), [state.directives]);
+  const draftDirectives = React.useMemo(() => state.directives.filter((d) => d.status !== "pending"), [state.directives]);
+  const allDirectives = React.useMemo(() => [...pendingDirectives, ...draftDirectives], [pendingDirectives, draftDirectives]);
   const hasPending = pendingDirectives.length > 0;
   const [decreeDraft, setDecreeDraft] = React.useState(decree);
-  const [expandedPendingId, setExpandedPendingId] = React.useState<number | null>(null);
+  const [dialogDirectiveId, setDialogDirectiveId] = React.useState<number | null>(null);
+  const dialogDirective = allDirectives.find((d) => d.id === dialogDirectiveId) || null;
+  const openDirectiveDialog = (directive: Directive) => {
+    setDialogDirectiveId(directive.id);
+    onStartEdit(directive);
+  };
+  const closeDirectiveDialog = () => {
+    setDialogDirectiveId(null);
+    onCancelEdit();
+  };
   React.useEffect(() => {
     setDecreeDraft(decree);
   }, [decree]);
   React.useEffect(() => {
-    if (expandedPendingId && !pendingDirectives.some((d) => d.id === expandedPendingId)) {
-      setExpandedPendingId(null);
+    if (dialogDirectiveId && !allDirectives.some((d) => d.id === dialogDirectiveId)) {
+      setDialogDirectiveId(null);
     }
-  }, [expandedPendingId, pendingDirectives]);
+  }, [dialogDirectiveId, allDirectives]);
 
   // 分幕：随 decree/report 态切。无诏文=御案理政；有诏文未结算=诏书御览；已结算=颁诏奏章。
   const phase: "desk" | "review" | "issued" = report ? "issued" : decree ? "review" : "desk";
@@ -814,6 +825,14 @@ export function EdictModal({
             disabled={!!busy}
           >
             <Edit3 size={15} />返工改稿
+          </button>
+          <button
+            className="seal-btn-ghost"
+            onClick={onRewriteDecree}
+            disabled={!!busy}
+            title="重新调用拟诏生成，会覆盖当前诏文"
+          >
+            <Undo2 size={15} />重写拟旨
           </button>
           {decreeDraft !== decree && (
             <button
@@ -853,15 +872,11 @@ export function EdictModal({
           <div className="directive-list">
             {allDirectives.map((directive) => (
               directive.status === "pending" ? (
-                <div className={`directive-list-row pending${expandedPendingId === directive.id ? " expanded" : ""}`} key={directive.id}>
+                <div className={`directive-list-row pending${dialogDirectiveId === directive.id ? " selected" : ""}`} key={directive.id}>
                   <button
                     type="button"
                     className="directive-list-main"
-                    onClick={() => {
-                      const nextId = expandedPendingId === directive.id ? null : directive.id;
-                      setExpandedPendingId(nextId);
-                      if (nextId !== null) onStartEdit(directive);
-                    }}
+                    onClick={() => openDirectiveDialog(directive)}
                   >
                     <span className="directive-list-no">#{directive.id}</span>
                     <span className="directive-list-text">{directive.text}</span>
@@ -869,26 +884,16 @@ export function EdictModal({
                     <span className="directive-list-source">{directive.source}</span>
                   </button>
                   <div className="directive-list-actions">
-                    <button className="vermilion-yes" onClick={() => { setExpandedPendingId(null); onConfirmDirective(directive.id); }} disabled={!!busy}><Check size={14} />准</button>
-                    <button className="vermilion-no" onClick={() => { setExpandedPendingId(null); onRejectDirective(directive.id); }} disabled={!!busy}><X size={14} />驳</button>
+                    <button className="vermilion-yes" onClick={() => { setDialogDirectiveId(null); onConfirmDirective(directive.id); }} disabled={!!busy}><Check size={14} />准</button>
+                    <button className="vermilion-no" onClick={() => { setDialogDirectiveId(null); onRejectDirective(directive.id); }} disabled={!!busy}><X size={14} />驳</button>
                   </div>
-                  {expandedPendingId === directive.id ? (
-                    <div className="directive-list-detail">
-                      {directive.notes ? <small>{directive.notes}</small> : null}
-                      <textarea value={editingDirectiveText} onChange={(event) => onEditingTextChange(event.target.value)} />
-                      <div className="directive-edit-actions">
-                        <button className="icon-button" onClick={() => { setExpandedPendingId(null); onSaveDirective(directive); }} aria-label="保存拟旨"><Check size={15} /></button>
-                        <button className="icon-button" onClick={() => { setExpandedPendingId(null); onCancelEdit(); }} aria-label="取消修改"><X size={15} /></button>
-                      </div>
-                    </div>
-                  ) : null}
                 </div>
               ) : (
-                <div className={`directive-list-row${editingDirectiveId === directive.id ? " expanded" : ""}`} key={directive.id}>
+                <div className={`directive-list-row${dialogDirectiveId === directive.id ? " selected" : ""}`} key={directive.id}>
                   <button
                     type="button"
                     className="directive-list-main"
-                    onClick={() => onStartEdit(directive)}
+                    onClick={() => openDirectiveDialog(directive)}
                   >
                     <span className="directive-list-no">#{directive.id}</span>
                     <span className="directive-list-text">{directive.text}</span>
@@ -896,19 +901,9 @@ export function EdictModal({
                     <span className="directive-list-source">{directive.source}</span>
                   </button>
                   <div className="directive-list-actions">
-                    <button onClick={() => onStartEdit(directive)} disabled={!!busy}><Edit3 size={14} />改</button>
+                    <button onClick={() => openDirectiveDialog(directive)} disabled={!!busy}><Edit3 size={14} />改</button>
                     <button onClick={() => onDeleteDirective(directive.id)} disabled={!!busy}><Trash2 size={14} />删</button>
                   </div>
-                  {editingDirectiveId === directive.id ? (
-                    <div className="directive-list-detail">
-                      {directive.notes ? <small>{directive.notes}</small> : null}
-                      <textarea value={editingDirectiveText} onChange={(event) => onEditingTextChange(event.target.value)} />
-                      <div className="directive-edit-actions">
-                        <button className="icon-button" onClick={() => onSaveDirective(directive)} aria-label="保存草案"><Check size={15} /></button>
-                        <button className="icon-button" onClick={onCancelEdit} aria-label="取消修改"><X size={15} /></button>
-                      </div>
-                    </div>
-                  ) : null}
                 </div>
               )
             ))}
@@ -931,6 +926,35 @@ export function EdictModal({
         </section>
       </div>
 
+      {dialogDirective ? (
+        <div className="directive-edit-layer" role="dialog" aria-modal="true" aria-label={`编辑指令 #${dialogDirective.id}`}>
+          <div className="directive-edit-scrim" onClick={closeDirectiveDialog} />
+          <section className="directive-edit-dialog">
+            <header className="directive-edit-dialog-head">
+              <div>
+                <span className={`directive-list-status ${dialogDirective.status === "pending" ? "pending" : "draft"}`}>
+                  {dialogDirective.status === "pending" ? "待批" : "草案"}
+                </span>
+                <h3>#{dialogDirective.id} {dialogDirective.source}</h3>
+              </div>
+              <button className="icon-button" aria-label="关闭编辑弹窗" onClick={closeDirectiveDialog}><X size={18} /></button>
+            </header>
+            {dialogDirective.notes ? <small className="directive-edit-note">{dialogDirective.notes}</small> : null}
+            <textarea value={editingDirectiveText} onChange={(event) => onEditingTextChange(event.target.value)} />
+            <footer className="directive-edit-dialog-actions">
+              {dialogDirective.status === "pending" ? (
+                <>
+                  <button className="vermilion-yes" onClick={() => { setDialogDirectiveId(null); onConfirmDirective(dialogDirective.id); }} disabled={!!busy}><Check size={14} />准</button>
+                  <button className="vermilion-no" onClick={() => { setDialogDirectiveId(null); onRejectDirective(dialogDirective.id); }} disabled={!!busy}><X size={14} />驳</button>
+                </>
+              ) : null}
+              <button className="seal-btn-save" onClick={() => { setDialogDirectiveId(null); onSaveDirective(dialogDirective); }} disabled={!!busy || !editingDirectiveText.trim()}><Check size={15} />保存</button>
+              <button className="seal-btn-ghost" onClick={closeDirectiveDialog} disabled={!!busy}>取消</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
       <div className="desk-footer">
         {hasPending && <small className="pending-hint">尚有 {pendingDirectives.length} 道大臣拟旨待朱批（准/驳），核定后方可拟诏。</small>}
         <button className="seal-btn-ghost" onClick={onGoToCourtChat} disabled={!!busy}>
@@ -949,7 +973,7 @@ export function EdictModal({
 }
 
 
-// 明黄诏书卷轴：竖排右起，古制体例。editable 时点开变 textarea 改稿。
+// 现代横排诏书预览：可读优先，editable 时点开改稿。
 export function DecreeScroll({
   text,
   editable,
@@ -963,8 +987,11 @@ export function DecreeScroll({
 }) {
   const [editing, setEditing] = React.useState(false);
   return (
-    <div className={`decree-scroll${sealed ? " sealed" : ""}`}>
-      <div className="decree-scroll-knob top" aria-hidden="true" />
+    <section className={`decree-scroll${sealed ? " sealed" : ""}`}>
+      <header className="decree-doc-head">
+        <span>{sealed ? "正式诏书" : "诏书预览"}</span>
+        {editable ? <small>点击正文可修改</small> : null}
+      </header>
       <div className="decree-scroll-paper">
         {editable && editing ? (
           <textarea
@@ -983,10 +1010,9 @@ export function DecreeScroll({
             {text || "（诏文待拟）"}
           </div>
         )}
-        {sealed ? <div className="decree-seal-mark" aria-hidden="true">勅</div> : null}
+        {sealed ? <div className="decree-seal-mark" aria-hidden="true">已颁</div> : null}
       </div>
-      <div className="decree-scroll-knob bottom" aria-hidden="true" />
-    </div>
+    </section>
   );
 }
 

@@ -30,6 +30,7 @@ from ming_sim.decree import (
     advance_without_edict,
     resolve_decisions_phase2,
     resolve_directives,
+    resolve_directives_modular,
     write_decree_with_agno,
 )
 from ming_sim.issues import bind_content as _bind_issues
@@ -902,14 +903,16 @@ class GameSession:
         return self.last_decree
 
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "") -> ResolveResult:
-        """颁诏并推演本回合（phase1）。要求无 pending 残留、≥1 条 draft。
+        """颁诏并推演本回合：诏书/在办事项/密令先分类路由四模块，各模块一次调用
+        同时产出叙事片段+结构化增量（resolve_directives_modular，见
+        issue-action-prancy-dragonfly 重构计划）。要求无 pending 残留、≥1 条 draft。
 
-        on_event(kind, data): 推演过程实时回调，透传给 resolve_directives。
-        cheat_directive: 作弊控制台强制结算项，一次性透传给 resolve_directives。
+        on_event(kind, data): 推演过程实时回调，透传给 resolve_directives_modular。
+        cheat_directive: 作弊控制台强制结算项，分别注入四模块 user payload。
 
-        返回 ResolveResult：含决策点 → awaiting=True，置 awaiting_decision 态，回合未推进，
-        调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点 → awaiting=False，
-        回合已结算推进，置 issued 态。
+        新模块化路径不产出 <<DECISION>> 块，恒定 awaiting=False、回合已结算推进、
+        置 issued 态——HITL 亲裁分支（result.awaiting / submit_decisions）保留代码
+        但不再触发，是 resolve_directives 旧路径的遗留分支。
         """
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
@@ -922,7 +925,7 @@ class GameSession:
             self.llm_config, self.agno_db, self.state, directives, db=self.db
         )
         self.last_decree = decree_text
-        result = resolve_directives(
+        result = resolve_directives_modular(
             self.state, self.db, self.agno_db, self.llm_config,
             directives, decree_text, deaths_this_turn=self.deaths_this_turn,
             debuts_this_turn=self.debuts_this_turn,

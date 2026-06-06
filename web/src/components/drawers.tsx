@@ -1,5 +1,5 @@
 import React from "react";
-import { Crown, Landmark, MapPinned, MessageSquareText, ScrollText, Star, Swords, X } from "lucide-react";
+import { Check, Crown, Landmark, MapPinned, MessageSquareText, ScrollText, Star, Swords, X } from "lucide-react";
 import { MinisterPortrait, PortraitUploadButton, RightDrawer, cacheBust, courtSlots, loadCourtPos, saveCourtPos, snapToSlot } from "./hud";
 import { formatMoney, formatSignedMoney, regionMonthlyTax } from "../format";
 import type { Army, Building, CourtChatMessage, GameState, Issue, MapNode, Minister, Region, Technology } from "../types";
@@ -10,6 +10,32 @@ const canAttendCourtChat = (minister: Minister) => {
   return !/(已故|罢居|罢闲|赋闲|致仕|养病|丁忧|归籍|在野)/.test(office);
 };
 
+function CourtChatAvatar({ message }: { message: CourtChatMessage }) {
+  if (message.role === "emperor") {
+    return (
+      <div className="court-chat-avatar emperor-avatar">
+        <Crown size={18} />
+      </div>
+    );
+  }
+  if (message.role === "conclusion") {
+    return <div className="court-chat-avatar conclusion-avatar">议</div>;
+  }
+  const name = message.speaker || "臣";
+  return (
+    <div className="court-chat-avatar">
+      <img
+        src={`/portraits/minister_${encodeURIComponent(name)}.png`}
+        alt={name}
+        onError={(e) => {
+          e.currentTarget.style.display = "none";
+          e.currentTarget.parentElement?.setAttribute("data-fallback", name.slice(0, 1) || "臣");
+        }}
+      />
+    </div>
+  );
+}
+
 export function MinisterCardList({
   list,
   portraitPrefix,
@@ -19,6 +45,12 @@ export function MinisterCardList({
   onUploadPortrait,
   courtMode = false,
   courtBubbles = {},
+  selectionMode = false,
+  selectedNames = [],
+  onToggleSelect,
+  isSelectable,
+  draggableOrder = false,
+  onReorder,
 }: {
   list: Minister[];
   portraitPrefix: string;
@@ -28,11 +60,18 @@ export function MinisterCardList({
   onUploadPortrait?: (ministerName: string, file: File) => Promise<void>;
   courtMode?: boolean;
   courtBubbles?: Record<string, string>;
+  selectionMode?: boolean;
+  selectedNames?: string[];
+  onToggleSelect?: (minister: Minister) => void;
+  isSelectable?: (minister: Minister) => boolean;
+  draggableOrder?: boolean;
+  onReorder?: (fromName: string, toName: string) => void;
 }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [positions, setPositions] = React.useState<Record<string, { px: number; py: number }>>({});
   const savedPosRef = React.useRef<Record<string, { px: number; py: number }> | null>(null);
   const dragging = React.useRef<{ name: string; startMX: number; startMY: number; startPX: number; startPY: number } | null>(null);
+  const orderDragging = React.useRef<string | null>(null);
   const didDrag = React.useRef(false);
 
   // 固定职位 → 固定槽位（由 office 文字推导：office 逗号分项里命中即占该槽）
@@ -184,13 +223,51 @@ export function MinisterCardList({
             : `/portraits/${portraitPrefix}${minister.id ?? minister.name}.png`;
           const poolFallback = !isCustom && minister.portrait_id ? `/portraits/${minister.portrait_id}.png` : undefined;
           const ousted = minister.status !== "active";
+          const selectable = !selectionMode || (isSelectable ? isSelectable(minister) : true);
+          const selectedForMeeting = selectionMode && selectedNames.includes(minister.name);
           return (
             <button key={minister.name}
-              className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`}
-              onClick={() => onOpenChat(minister)}>
+              className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""} ${selectionMode ? "selecting" : ""} ${selectedForMeeting ? "meeting-selected" : ""} ${!selectable ? "meeting-disabled" : ""} ${draggableOrder ? "order-draggable" : ""}`}
+              draggable={draggableOrder}
+              onDragStart={(e) => {
+                if (!draggableOrder) return;
+                orderDragging.current = minister.name;
+                didDrag.current = true;
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", minister.name);
+              }}
+              onDragOver={(e) => {
+                if (!draggableOrder || !orderDragging.current || orderDragging.current === minister.name) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(e) => {
+                if (!draggableOrder) return;
+                e.preventDefault();
+                const fromName = orderDragging.current || e.dataTransfer.getData("text/plain");
+                orderDragging.current = null;
+                if (fromName && fromName !== minister.name) onReorder?.(fromName, minister.name);
+              }}
+              onDragEnd={() => {
+                orderDragging.current = null;
+                window.setTimeout(() => { didDrag.current = false; }, 0);
+              }}
+              onClick={() => {
+                if (didDrag.current) return;
+                if (selectionMode) {
+                  if (selectable) onToggleSelect?.(minister);
+                  return;
+                }
+                onOpenChat(minister);
+              }}>
               <div className="minister-card-portrait-wrap">
                 <MinisterPortrait primary={dedicated} fallback={poolFallback} name={minister.name} />
                 {onUploadPortrait && <PortraitUploadButton ministerName={minister.name} onUpload={onUploadPortrait} />}
+                {selectionMode && (
+                  <span className={`minister-select-mark ${selectedForMeeting ? "checked" : ""}`}>
+                    {selectedForMeeting ? <Check size={14} /> : null}
+                  </span>
+                )}
               </div>
               <div className="minister-card-info">
                 <div className="minister-card-top">
@@ -219,6 +296,8 @@ export function MinisterCardList({
           ? `/portraits/${minister.portrait_id}.png`
           : undefined;
         const ousted = minister.status !== "active";
+        const selectable = !selectionMode || (isSelectable ? isSelectable(minister) : true);
+        const selectedForMeeting = selectionMode && selectedNames.includes(minister.name);
         const pct = positions[minister.name];
         // 透视缩放：py=0最远最小，py=1最近最大
         const perspScale = pct ? 0.38 + 0.62 * pct.py : 1;
@@ -226,7 +305,7 @@ export function MinisterCardList({
         return (
           <button
             key={minister.name}
-            className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`}
+            className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""} ${selectionMode ? "selecting" : ""} ${selectedForMeeting ? "meeting-selected" : ""} ${!selectable ? "meeting-disabled" : ""}`}
             style={pct ? {
               position: "absolute",
               left: `${pct.px * 100}%`,
@@ -237,12 +316,27 @@ export function MinisterCardList({
               zIndex: Math.round(pct.py * 1000),
             } : { visibility: "hidden" }}
             onMouseDown={(e) => onMouseDown(e, minister.name)}
-            onClick={(e) => { if (didDrag.current) { e.preventDefault(); return; } onOpenChat(minister); }}
+            onClick={(e) => {
+              if (didDrag.current) {
+                e.preventDefault();
+                return;
+              }
+              if (selectionMode) {
+                if (selectable) onToggleSelect?.(minister);
+                return;
+              }
+              onOpenChat(minister);
+            }}
           >
             <div className="minister-card-portrait-wrap">
               <MinisterPortrait primary={dedicated} fallback={poolFallback} name={minister.name} />
               {onUploadPortrait && (
                 <PortraitUploadButton ministerName={minister.name} onUpload={onUploadPortrait} />
+              )}
+              {selectionMode && (
+                <span className={`minister-select-mark ${selectedForMeeting ? "checked" : ""}`}>
+                  {selectedForMeeting ? <Check size={14} /> : null}
+                </span>
               )}
             </div>
             <div className="minister-card-info">
@@ -680,6 +774,8 @@ export function CourtDrawer({
   onCourtChatSelectedMinistersChange,
   onCourtChatInputChange,
   onSendCourtChat,
+  onStopCourtChat,
+  onSummarizeCourtChat,
   onRefreshCourtChat,
   onCloseCourtChatPanel,
   onChooseCourtChatDecision,
@@ -705,6 +801,8 @@ export function CourtDrawer({
   onCourtChatSelectedMinistersChange: React.Dispatch<React.SetStateAction<string[]>>;
   onCourtChatInputChange: (value: string) => void;
   onSendCourtChat: (ministers: Minister[], overrideMessage?: string) => void;
+  onStopCourtChat: () => void;
+  onSummarizeCourtChat: (ministers: Minister[]) => void;
   onRefreshCourtChat: () => void;
   onCloseCourtChatPanel: () => void;
   onChooseCourtChatDecision: (option: string) => void;
@@ -712,19 +810,81 @@ export function CourtDrawer({
   const [q, setQ] = React.useState("");
   const [showHistory, setShowHistory] = React.useState(false);
   const [courtChatStep, setCourtChatStep] = React.useState<"closed" | "composing">("closed");
+  const [meetingSelectionMode, setMeetingSelectionMode] = React.useState(false);
+  const [meetingSelectedNames, setMeetingSelectedNames] = React.useState<string[]>([]);
+  const [activeMinisterOrder, setActiveMinisterOrder] = React.useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem("ming-active-minister-order");
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((name) => typeof name === "string") : [];
+    } catch {
+      return [];
+    }
+  });
   const courtChatPanelBodyRef = React.useRef<HTMLDivElement | null>(null);
   const cleanCourtChatText = (value: string) => value.replace(/\s*<<<臣:([^>\n]+)>>+\s*/g, "\n$1：").trim();
-  const filtered = q ? ministers.filter((m) => m.name.includes(q) || (m.office || "").includes(q)) : ministers;
+  const orderIndex = new Map(activeMinisterOrder.map((name, index) => [name, index]));
+  const orderedMinisters = ministerGroup === "在职"
+    ? [...ministers].sort((a, b) => {
+      const ai = orderIndex.has(a.name) ? orderIndex.get(a.name)! : Number.MAX_SAFE_INTEGER;
+      const bi = orderIndex.has(b.name) ? orderIndex.get(b.name)! : Number.MAX_SAFE_INTEGER;
+      if (ai !== bi) return ai - bi;
+      return ministers.indexOf(a) - ministers.indexOf(b);
+    })
+    : ministers;
+  const filtered = q ? orderedMinisters.filter((m) => m.name.includes(q) || (m.office || "").includes(q)) : orderedMinisters;
   const activeFiltered = filtered.filter(canAttendCourtChat);
+  const activeAll = ministers.filter(canAttendCourtChat);
+  const activeAllNames = activeAll.map((m) => m.name);
   const activeNames = activeFiltered.map((m) => m.name);
-  const selectedNames = courtChatSelectedMinisters.filter((name) => activeNames.includes(name));
-  const courtChatAvailable = ministerGroup === "内阁+六部" || ministerGroup === "收藏";
+  const rosterModes = ministerGroup === "内阁+六部" || ministerGroup === "收藏";
+  const activeMeetingSelection = ministerGroup === "在职" && meetingSelectionMode;
+  const selectedNames = courtChatSelectedMinisters.filter((name) => (
+    activeMeetingSelection ? activeAllNames.includes(name) : activeNames.includes(name)
+  ));
+  const courtChatAvailable = rosterModes || activeMeetingSelection;
   const canChat = open && courtChatAvailable && selectedNames.length > 0;
+  const courtChatRoster = activeMeetingSelection ? activeAll : activeFiltered;
   const activeIssues = _state.issues.filter((i) => i.kind === "situation" || i.kind === "initiative");
+  const setMeetingSelection = (names: string[]) => {
+    const next = names.filter((name, index) => activeAllNames.includes(name) && names.indexOf(name) === index);
+    setMeetingSelectedNames(next);
+    onCourtChatSelectedMinistersChange(next);
+  };
+  const toggleMeetingMinister = (minister: Minister) => {
+    if (!canAttendCourtChat(minister)) return;
+    setMeetingSelection(
+      meetingSelectedNames.includes(minister.name)
+        ? meetingSelectedNames.filter((name) => name !== minister.name)
+        : [...meetingSelectedNames, minister.name],
+    );
+  };
+  const startMeetingSelection = () => {
+    setMeetingSelection(meetingSelectedNames);
+    setMeetingSelectionMode(true);
+    setCourtChatStep("composing");
+  };
+  const reorderActiveMinister = (fromName: string, toName: string) => {
+    const visibleNames = filtered.map((m) => m.name);
+    if (!visibleNames.includes(fromName) || !visibleNames.includes(toName)) return;
+    const knownNames = ministers.map((m) => m.name);
+    const current = [
+      ...activeMinisterOrder.filter((name) => knownNames.includes(name)),
+      ...knownNames.filter((name) => !activeMinisterOrder.includes(name)),
+    ];
+    const fromIndex = current.indexOf(fromName);
+    const toIndex = current.indexOf(toName);
+    if (fromIndex < 0 || toIndex < 0) return;
+    const next = [...current];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    setActiveMinisterOrder(next);
+    localStorage.setItem("ming-active-minister-order", JSON.stringify(next));
+  };
   const pickCourtChatTopic = (issue: Issue) => {
     const opener = `众卿，关于「${issue.title}」一事，${issue.stage_text}。诸卿有何对策？`;
     onCourtChatInputChange(opener);
-    onSendCourtChat(activeFiltered, opener);
+    onSendCourtChat(courtChatRoster, opener);
   };
   React.useEffect(() => {
     if (!open) return;
@@ -740,9 +900,20 @@ export function CourtDrawer({
       setCourtChatStep("closed");
       return;
     }
-    onCourtChatSelectedMinistersChange(activeNames);
+    if (rosterModes) {
+      onCourtChatSelectedMinistersChange(activeNames);
+    } else {
+      const next = meetingSelectedNames.filter((name) => activeAllNames.includes(name));
+      setMeetingSelectedNames(next);
+      onCourtChatSelectedMinistersChange(next);
+    }
     setCourtChatStep("composing");
-  }, [courtChatAvailable, ministerGroup, open, activeNames.join("|"), onCourtChatSelectedMinistersChange]);
+  }, [courtChatAvailable, rosterModes, ministerGroup, open, activeNames.join("|"), activeAllNames.join("|"), meetingSelectedNames.join("|"), onCourtChatSelectedMinistersChange]);
+  React.useEffect(() => {
+    if (ministerGroup !== "在职") {
+      setMeetingSelectionMode(false);
+    }
+  }, [ministerGroup]);
   return (
     <>
       {open && <button className="drawer-scrim" aria-label="收起" onClick={onClose} />}
@@ -768,6 +939,35 @@ export function CourtDrawer({
         <div className="right-drawer-search court-search">
           <input className="right-drawer-search-input" placeholder="搜索姓名/职位…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
+        {ministerGroup === "在职" ? (
+          <div className="court-meeting-toolbar">
+            <button
+              type="button"
+              className={`court-meeting-start ${meetingSelectionMode ? "active" : ""}`}
+              disabled={!activeFiltered.length}
+              onClick={() => {
+                if (meetingSelectionMode) {
+                  setMeetingSelectionMode(false);
+                  setCourtChatStep("closed");
+                  return;
+                }
+                startMeetingSelection();
+              }}
+            >
+              <MessageSquareText size={15} />
+              <span>{meetingSelectionMode ? "退出御前会议" : "御前会议"}</span>
+            </button>
+            {meetingSelectionMode ? (
+              <>
+                <span className="court-meeting-count">已选 {selectedNames.length} / {activeFiltered.length}</span>
+                <button type="button" className="court-meeting-link" onClick={() => setMeetingSelection(activeAllNames)}>全选</button>
+                <button type="button" className="court-meeting-link" onClick={() => setMeetingSelection([])}>清空</button>
+              </>
+            ) : (
+              <span className="court-meeting-count">多选在职大臣入会</span>
+            )}
+          </div>
+        ) : null}
         <MinisterCardList
           list={filtered}
           portraitPrefix="minister_"
@@ -777,6 +977,12 @@ export function CourtDrawer({
           courtMode={ministerGroup === "内阁+六部" || ministerGroup === "收藏"}
           onUploadPortrait={onUploadPortrait}
           courtBubbles={courtChatPanelOpen ? {} : courtChatBubbles}
+          selectionMode={activeMeetingSelection}
+          selectedNames={meetingSelectionMode ? meetingSelectedNames : courtChatSelectedMinisters}
+          onToggleSelect={toggleMeetingMinister}
+          isSelectable={canAttendCourtChat}
+          draggableOrder={ministerGroup === "在职"}
+          onReorder={reorderActiveMinister}
         />
         {courtChatPanelOpen ? (
           <>
@@ -785,18 +991,21 @@ export function CourtDrawer({
               <header className="court-chat-panel-head">
                 <div>
                   <b>朝会群臣</b>
-                  <span>{courtChatBusy ? "群臣奏对中" : "奏对已毕"}</span>
+                  <span>{courtChatBusy ? "群臣奏对中，陛下可随时发话" : "御前会议"}</span>
                 </div>
                 <button className="icon-button" onClick={onCloseCourtChatPanel} aria-label="关闭朝会奏对"><X size={15} /></button>
               </header>
               <div className="court-chat-panel-body" ref={courtChatPanelBodyRef}>
                 {courtChatLiveMessages.map((m, i) => (
                   <article key={`${m.speaker}-${i}-${m.content}`} className={`court-chat-panel-line ${m.role}`}>
-                    <div className="court-chat-panel-speaker">
-                      {m.role === "emperor" ? "御问" : m.role === "conclusion" ? "朝议结论" : m.speaker}
-                    </div>
-                    <div className="court-chat-panel-bubble">
-                      <p>{m.displayContent ?? m.content}</p>
+                    <CourtChatAvatar message={m} />
+                    <div className="court-chat-message-stack">
+                      <div className="court-chat-panel-speaker">
+                        {m.role === "emperor" ? "皇帝" : m.role === "conclusion" ? "朝议结论" : m.speaker}
+                      </div>
+                      <div className="court-chat-panel-bubble">
+                        <p>{m.displayContent ?? m.content}</p>
+                      </div>
                     </div>
                   </article>
                 ))}
@@ -817,6 +1026,36 @@ export function CourtDrawer({
                   </div>
                 ) : null}
               </div>
+              <footer className="court-chat-panel-composer">
+                <button className="court-chat-history-btn" onClick={() => setShowHistory((v) => !v)} title="查看本月朝会聊天历史">
+                  <MessageSquareText size={16} />
+                  <span>{courtChatHistory.length}</span>
+                </button>
+                <textarea
+                  className="court-chat-input"
+                  value={courtChatInput}
+                  placeholder={courtChatBusy ? "朕要插一句..." : "垂询群臣..."}
+                  rows={1}
+                  onChange={(e) => onCourtChatInputChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      onSendCourtChat(courtChatRoster);
+                    }
+                  }}
+                />
+                <div className="court-chat-actions">
+                  {courtChatBusy ? (
+                    <button className="court-chat-stop" disabled={!courtChatBusy} onClick={onStopCourtChat}>停止</button>
+                  ) : (
+                    <button className="court-chat-summary" disabled={!canChat || !courtChatLiveMessages.length} onClick={() => onSummarizeCourtChat(courtChatRoster)}>总结</button>
+                  )}
+                  <button className={`court-chat-send ${courtChatBusy ? "interrupt" : ""}`} disabled={!canChat || !courtChatInput.trim()} onClick={() => onSendCourtChat(courtChatRoster)}>
+                    {courtChatBusy ? "打断" : "发送"}
+                  </button>
+                </div>
+                {courtChatError ? <div className="court-chat-error">{courtChatError}</div> : null}
+              </footer>
             </section>
           </>
         ) : null}
@@ -841,10 +1080,6 @@ export function CourtDrawer({
         ) : null}
         {courtChatStep === "composing" && courtChatAvailable ? (
         <div className="court-chat-dock open step-composing">
-          <button className="court-chat-history-btn" onClick={() => setShowHistory((v) => !v)} title="查看本月朝会聊天历史">
-            <MessageSquareText size={16} />
-            <span>{courtChatHistory.length}</span>
-          </button>
           {activeIssues.length ? (
             <div className="court-chat-topic-chips">
               <span className="court-chat-topic-chips-label">话题：</span>
@@ -862,23 +1097,31 @@ export function CourtDrawer({
               ))}
             </div>
           ) : null}
-          <textarea
-            className="court-chat-input"
-            value={courtChatInput}
-            placeholder={courtChatBusy ? "插话打断，扭转廷议..." : "垂询群臣..."}
-            rows={1}
-            onChange={(e) => onCourtChatInputChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                onSendCourtChat(activeFiltered);
-              }
-            }}
-          />
-          <button className="court-chat-send" disabled={!canChat || !courtChatInput.trim()} onClick={() => onSendCourtChat(activeFiltered)}>
-            {courtChatBusy ? "插话" : "发问"}
-          </button>
-          {courtChatError ? <div className="court-chat-error">{courtChatError}</div> : null}
+          {!courtChatPanelOpen ? (
+            <>
+              <button className="court-chat-history-btn" onClick={() => setShowHistory((v) => !v)} title="查看本月朝会聊天历史">
+                <MessageSquareText size={16} />
+                <span>{courtChatHistory.length}</span>
+              </button>
+              <textarea
+                className="court-chat-input"
+                value={courtChatInput}
+                placeholder="垂询群臣..."
+                rows={1}
+                onChange={(e) => onCourtChatInputChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    onSendCourtChat(courtChatRoster);
+                  }
+                }}
+              />
+              <button className="court-chat-send" disabled={!canChat || !courtChatInput.trim()} onClick={() => onSendCourtChat(courtChatRoster)}>
+                发问
+              </button>
+              {courtChatError ? <div className="court-chat-error">{courtChatError}</div> : null}
+            </>
+          ) : null}
         </div>
         ) : null}
       </aside>

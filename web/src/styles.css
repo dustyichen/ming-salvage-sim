@@ -1403,6 +1403,65 @@ select:focus-visible {
   height: 20vh;
 }
 
+.court-meeting-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px solid rgba(255, 220, 150, 0.18);
+  border-radius: 6px;
+  background: rgba(22, 13, 7, 0.44);
+}
+
+.court-meeting-start,
+.court-meeting-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 32px;
+  border: 1px solid rgba(255, 220, 150, 0.32);
+  border-radius: 5px;
+  color: #ffe8a0;
+  background: linear-gradient(180deg, rgba(110, 45, 34, 0.92), rgba(67, 28, 22, 0.92));
+}
+
+.court-meeting-start {
+  padding: 0 12px;
+  font-weight: 700;
+}
+
+.court-meeting-start:hover:not(:disabled),
+.court-meeting-link:hover {
+  color: #fff5ce;
+  border-color: rgba(255, 229, 166, 0.58);
+  filter: brightness(1.08);
+}
+
+.court-meeting-start.active {
+  color: #1c1208;
+  background: #ffe29a;
+}
+
+.court-meeting-start:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.court-meeting-link {
+  min-height: 28px;
+  padding: 0 9px;
+  color: rgba(255, 232, 160, 0.92);
+  background: rgba(50, 27, 12, 0.72);
+}
+
+.court-meeting-count {
+  color: rgba(255, 225, 165, 0.72);
+  font-size: 0.82rem;
+}
+
 .court-speech-bubble {
   position: absolute;
   left: 50%;
@@ -1462,14 +1521,14 @@ select:focus-visible {
   top: 42px;
   z-index: 5000;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(1180px, calc(100vw - 96px));
   height: min(68vh, calc(100vh - 238px), 720px);
   min-height: 360px;
-  border: 1px solid rgba(128, 91, 34, 0.28);
+  border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 8px;
-  background: #fff8df;
-  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  background: #ededed;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.42);
   transform: translateX(-50%);
   overflow: hidden;
 }
@@ -1487,9 +1546,10 @@ select:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
-  border-bottom: 1px solid rgba(128, 91, 34, 0.18);
-  background: #fff3c9;
+  min-height: 52px;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  background: #f7f7f7;
 }
 
 .court-chat-panel-head b,
@@ -1498,14 +1558,14 @@ select:focus-visible {
 }
 
 .court-chat-panel-head b {
-  color: #17110a;
-  font-size: 1.02rem;
+  color: #111;
+  font-size: 1rem;
 }
 
 .court-chat-panel-head span {
   margin-top: 2px;
-  color: rgba(23, 17, 10, 0.62);
-  font-size: 0.78rem;
+  color: rgba(0, 0, 0, 0.46);
+  font-size: 0.76rem;
 }
 
 .court-chat-panel-body {
@@ -1513,45 +1573,123 @@ select:focus-visible {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 13px;
+  gap: 14px;
   padding: 16px 18px 22px;
+  background: #ededed;
+}
+
+.court-chat-panel-composer {
+  position: relative;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 9px 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  background: #f7f7f7;
 }
 
 .court-chat-panel-line {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  max-width: min(76%, 820px);
-  gap: 5px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: start;
+  width: min(80%, 820px);
+  max-width: min(80%, 820px);
+  gap: 10px;
 }
 
 .court-chat-panel-line.emperor {
   align-self: flex-end;
-  align-items: flex-end;
+  grid-template-columns: minmax(0, 1fr) 38px;
 }
 
 .court-chat-panel-line.conclusion {
   align-self: center;
-  align-items: center;
+  grid-template-columns: 34px minmax(0, auto);
   max-width: min(82%, 880px);
 }
 
+.court-chat-avatar {
+  grid-column: 1;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 4px;
+  color: #fff;
+  background: #9e9e9e;
+  box-shadow: none;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+}
+
+.court-chat-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+}
+
+.court-chat-avatar[data-fallback]::after {
+  content: attr(data-fallback);
+}
+
+.court-chat-panel-line.emperor .court-chat-avatar {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.emperor-avatar {
+  color: #fff;
+  background: #4f6f3b;
+}
+
+.conclusion-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: #fff7d8;
+  background: #8b6b32;
+}
+
+.court-chat-message-stack {
+  grid-column: 2;
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.court-chat-panel-line.emperor .court-chat-message-stack {
+  grid-column: 1;
+  grid-row: 1;
+  justify-items: end;
+}
+
 .court-chat-panel-speaker {
-  padding: 0 8px;
-  color: #17110a;
-  font-size: 0.82rem;
-  font-weight: 700;
+  padding: 0 2px;
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 0.73rem;
+  font-weight: 500;
+  opacity: 1;
 }
 
 .court-chat-panel-bubble {
   position: relative;
+  width: fit-content;
   max-width: 100%;
-  padding: 10px 13px;
-  border: 1px solid rgba(0, 0, 0, 0.14);
-  border-radius: 8px;
-  color: #15110b;
-  background: #fffaf0;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+  min-width: 0;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 4px;
+  color: #111;
+  background: #fff;
+  box-shadow: none;
 }
 
 .court-chat-panel-bubble::before {
@@ -1561,15 +1699,13 @@ select:focus-visible {
   top: 15px;
   width: 12px;
   height: 12px;
-  border-left: 1px solid rgba(0, 0, 0, 0.14);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.14);
-  background: #fffaf0;
+  border: 0;
+  background: #fff;
   transform: rotate(45deg);
 }
 
 .court-chat-panel-line.emperor .court-chat-panel-bubble {
-  border-color: rgba(0, 0, 0, 0.16);
-  background: #ffffff;
+  background: #95ec69;
 }
 
 .court-chat-panel-line.conclusion .court-chat-panel-bubble {
@@ -1586,23 +1722,24 @@ select:focus-visible {
   right: -7px;
   border-left: 0;
   border-bottom: 0;
-  border-right: 1px solid rgba(0, 0, 0, 0.16);
-  border-top: 1px solid rgba(0, 0, 0, 0.16);
-  background: #ffffff;
+  border-right: 0;
+  border-top: 0;
+  background: #95ec69;
 }
 
 .court-chat-panel-line p {
   margin: 0;
-  color: #15110b;
+  color: #111;
   font-size: 0.94rem;
-  line-height: 1.68;
+  line-height: 1.55;
   white-space: pre-wrap;
+  word-break: break-word;
   overflow-wrap: anywhere;
 }
 
 .court-chat-panel-thinking {
   padding: 4px 2px;
-  color: rgba(23, 17, 10, 0.62);
+  color: rgba(0, 0, 0, 0.42);
   font-size: 0.86rem;
 }
 
@@ -1674,24 +1811,32 @@ select:focus-visible {
   transform: translateX(-50%);
 }
 
+.court-chat-dock:empty {
+  display: none;
+}
+
 .court-chat-history-btn,
 .court-chat-start,
-.court-chat-send {
+.court-chat-send,
+.court-chat-stop,
+.court-chat-summary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
   min-height: 38px;
-  border: 1px solid rgba(128, 91, 34, 0.24);
+  border: 0;
   border-radius: 5px;
-  color: #17110a;
-  background: #fff1bf;
+  color: #111;
+  background: #e9e9e9;
 }
 
 .court-chat-history-btn:hover,
 .court-chat-start:hover:not(:disabled),
-.court-chat-send:hover:not(:disabled) {
-  background: #ffe29a;
+.court-chat-send:hover:not(:disabled),
+.court-chat-stop:hover:not(:disabled),
+.court-chat-summary:hover:not(:disabled) {
+  background: #dedede;
 }
 
 .court-chat-start {
@@ -1703,21 +1848,48 @@ select:focus-visible {
   cursor: default;
 }
 
+.court-chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.court-chat-send.interrupt {
+  color: #fff;
+  background: #fa5151;
+}
+
+.court-chat-stop {
+  color: #fff;
+  background: #fa5151;
+}
+
+.court-chat-summary {
+  color: #fff;
+  background: #07c160;
+}
+
+.court-chat-stop:disabled,
+.court-chat-summary:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .court-chat-input {
-  grid-column: 2;
   min-height: 38px;
   max-height: 92px;
+  min-width: 0;
   resize: vertical;
   padding: 8px 10px;
-  border: 1px solid rgba(128, 91, 34, 0.28);
+  border: 0;
   border-radius: 5px;
-  color: #17110a;
-  background: rgba(255, 253, 245, 0.86);
+  color: #111;
+  background: #fff;
   outline: none;
 }
 
 .court-chat-input::placeholder {
-  color: rgba(23, 17, 10, 0.48);
+  color: rgba(0, 0, 0, 0.34);
 }
 
 .court-chat-error {
@@ -1996,6 +2168,53 @@ select:focus-visible {
 .minister-card.selected {
   transform: translateY(-8px) scale(1.04);
   filter: drop-shadow(0 8px 20px rgba(0,0,0,0.75)) brightness(1.08);
+}
+
+.minister-card.selecting {
+  cursor: pointer;
+}
+
+.minister-card.order-draggable {
+  cursor: grab;
+}
+
+.minister-card.order-draggable:active {
+  cursor: grabbing;
+}
+
+.minister-card.meeting-selected {
+  filter: drop-shadow(0 8px 22px rgba(255, 203, 88, 0.52)) brightness(1.1);
+}
+
+.minister-card.meeting-selected .minister-card-portrait {
+  outline: 2px solid #ffe29a;
+  outline-offset: -2px;
+}
+
+.minister-card.meeting-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.minister-select-mark {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(255, 232, 166, 0.58);
+  border-radius: 50%;
+  color: #1b1007;
+  background: rgba(24, 13, 5, 0.58);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.minister-select-mark.checked {
+  border-color: #ffe29a;
+  background: #ffe29a;
 }
 
 .minister-name {
@@ -3560,7 +3779,7 @@ button:disabled {
     rgba(253, 241, 220, 0.90);
 }
 
-.directive-list-row.expanded {
+.directive-list-row.selected {
   align-items: start;
   border-color: rgba(128, 86, 42, 0.38);
   background:
@@ -3677,22 +3896,105 @@ button:disabled {
   background: rgba(250, 239, 232, 0.90) !important;
 }
 
-.directive-list-detail {
-  grid-column: 1 / -1;
+.directive-edit-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 5030;
   display: grid;
-  gap: 8px;
-  padding: 2px 0 0;
+  place-items: center;
+  padding: 24px;
 }
 
-.directive-list-detail textarea {
-  width: 100%;
-  line-height: 1.6;
+.directive-edit-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(18, 13, 8, 0.42);
+  backdrop-filter: blur(2px);
+}
+
+.directive-edit-dialog {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 12px;
+  width: min(760px, calc(100vw - 48px));
+  max-height: min(760px, calc(100vh - 48px));
+  padding: 18px;
+  border: 1px solid rgba(120, 86, 42, 0.34);
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(24, 14, 6, 0.44);
+  color: #111111;
+}
+
+.directive-edit-dialog,
+.directive-edit-dialog * {
+  color: #111111 !important;
+}
+
+.directive-edit-dialog .directive-list-status.pending {
+  color: #8e3f2c !important;
+}
+
+.directive-edit-dialog .directive-list-status.draft {
+  color: #2f665f !important;
+}
+
+.directive-edit-dialog-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.directive-edit-dialog-head h3 {
+  margin: 8px 0 0;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-size: 1.22rem;
+}
+
+.directive-edit-note {
+  color: #555555;
+}
+
+.directive-edit-dialog textarea {
+  min-height: min(46vh, 420px);
+  line-height: 1.7;
   resize: vertical;
+  color: #111111;
+  background: #ffffff !important;
+  border-color: rgba(0, 0, 0, 0.24);
   font-family: "Noto Serif SC", "Songti SC", serif;
 }
 
-.directive-list-detail textarea {
-  min-height: clamp(220px, 38vh, 420px);
+.directive-edit-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.directive-edit-dialog-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 7px 14px;
+  border-radius: 4px;
+}
+
+.directive-edit-dialog-actions .vermilion-yes {
+  color: #8e2f22;
+  border: 1px solid rgba(142, 47, 34, 0.45);
+  background: #ffffff;
+}
+
+.directive-edit-dialog-actions .vermilion-no {
+  color: #333333;
+  border: 1px solid rgba(0, 0, 0, 0.32);
+  background: #ffffff;
 }
 
 .directive-list {
@@ -3862,7 +4164,7 @@ button:disabled {
   font-family: "Noto Serif SC", "Songti SC", serif;
 }
 
-/* ── 幕二/三 诏书卷轴 ── */
+/* ── 幕二/三 现代诏书文档 ── */
 .edict-stage-review,
 .edict-stage-issued {
   align-items: center;
@@ -3870,53 +4172,58 @@ button:disabled {
 }
 
 .decree-scroll {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  width: min(620px, 92%);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(920px, 94%);
   flex: 1;
   min-height: 0;
   margin: 0 auto;
-}
-
-.decree-scroll-knob {
-  height: 16px;
-  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid rgba(120, 86, 42, 0.26);
   border-radius: 8px;
-  background:
-    linear-gradient(180deg, #6e4a22, #3f2a12);
-  box-shadow: 0 2px 6px rgba(40, 24, 8, 0.4);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 36px rgba(32, 20, 8, 0.18);
 }
 
-.decree-scroll-knob.top { margin-bottom: -4px; }
-.decree-scroll-knob.bottom { margin-top: -4px; }
+.decree-doc-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(120, 86, 42, 0.18);
+  background: #ffffff;
+}
 
-/* 明黄绢纸 */
+.decree-doc-head span {
+  color: #17110a !important;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-size: 1.08rem;
+  font-weight: 800;
+}
+
+.decree-doc-head small {
+  color: #7a6a55 !important;
+  font-size: 0.82rem;
+}
+
 .decree-scroll-paper {
   position: relative;
-  flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 28px 26px;
-  border-left: 2px solid rgba(150, 36, 28, 0.30);
-  border-right: 2px solid rgba(150, 36, 28, 0.30);
-  background:
-    repeating-linear-gradient(90deg, rgba(150, 36, 28, 0.05) 0 1px, transparent 1px 34px),
-    linear-gradient(180deg, #f6e6b0, #f0d894);
-  box-shadow: inset 0 0 40px rgba(150, 90, 20, 0.18);
+  padding: 22px 24px;
+  background: #ffffff;
 }
 
-/* 竖排右起 */
 .decree-scroll-body,
 .decree-scroll-edit {
-  writing-mode: vertical-rl;
-  text-orientation: upright;
-  height: 100%;
-  line-height: 2;
-  letter-spacing: 0.12em;
-  font-size: 1.02rem;
+  width: 100%;
+  min-height: 100%;
+  line-height: 1.85;
+  letter-spacing: 0;
+  font-size: 1rem;
   font-family: "Noto Serif SC", "Songti SC", serif;
-  color: #3a2410 !important;
+  color: #17110a !important;
   white-space: pre-wrap;
 }
 
@@ -3929,30 +4236,32 @@ button:disabled {
 }
 
 .decree-scroll-edit {
-  width: 100%;
-  border: none;
+  min-height: 48vh;
+  padding: 12px 14px;
+  border: 1px solid rgba(0, 0, 0, 0.20);
+  border-radius: 5px;
   outline: none;
-  resize: none;
-  background: transparent !important;
+  resize: vertical;
+  background: #ffffff !important;
+  color: #111111 !important;
 }
 
-/* 朱印 */
 .decree-seal-mark {
   position: absolute;
   left: 24px;
   bottom: 22px;
   display: grid;
   place-items: center;
-  width: 56px;
-  height: 56px;
-  border: 2px solid rgba(150, 36, 28, 0.85);
-  border-radius: 4px;
+  min-width: 52px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(150, 36, 28, 0.60);
+  border-radius: 999px;
   color: rgba(150, 36, 28, 0.9) !important;
-  font-size: 1.6rem;
+  font-size: 0.86rem;
   font-weight: 700;
   font-family: "Noto Serif SC", "Songti SC", serif;
-  transform: rotate(-6deg);
-  opacity: 0.88;
+  background: rgba(255, 245, 242, 0.92);
 }
 
 .edict-review-bar {
@@ -4137,20 +4446,33 @@ button:disabled {
     linear-gradient(90deg, rgba(156, 66, 44, 0.075), transparent 38px),
     rgba(253, 241, 220, 0.90) !important;
 }
-.modal-bg-edict .directive-list-row.expanded {
+.modal-bg-edict .directive-list-row.selected {
   background:
     linear-gradient(90deg, rgba(128, 86, 42, 0.08), transparent 30px),
     rgba(255, 247, 225, 0.94) !important;
 }
 .modal-bg-edict .decree-scroll-paper {
-  background:
-    repeating-linear-gradient(90deg, rgba(150, 36, 28, 0.05) 0 1px, transparent 1px 34px),
-    linear-gradient(180deg, #f6e6b0, #f0d894) !important;
-  box-shadow: inset 0 0 40px rgba(150, 90, 20, 0.18) !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
 }
-.modal-bg-edict .decree-scroll-knob {
-  background: linear-gradient(180deg, #6e4a22, #3f2a12) !important;
-  box-shadow: 0 2px 6px rgba(40, 24, 8, 0.4) !important;
+
+/* 指令编辑弹窗必须脱离诏书页的透明通配：白底黑字 */
+.modal-bg-edict .directive-edit-dialog {
+  background: #ffffff !important;
+  color: #111111 !important;
+  box-shadow: 0 24px 70px rgba(24, 14, 6, 0.44) !important;
+  backdrop-filter: none !important;
+}
+
+.modal-bg-edict .directive-edit-dialog textarea {
+  background: #ffffff !important;
+  color: #111111 !important;
+  border-color: rgba(0, 0, 0, 0.24) !important;
+}
+
+.modal-bg-edict .directive-edit-dialog button,
+.modal-bg-edict .directive-edit-dialog .directive-list-status {
+  background: #ffffff !important;
 }
 
 .modal-bg-state .summary-table th {
@@ -7851,4 +8173,54 @@ button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
   filter: grayscale(0.5);
+}
+
+/* Final override: directive edit dialog is a real modal, not parchment-transparent. */
+.modal-bg-edict .directive-edit-layer .directive-edit-dialog {
+  background: #ffffff !important;
+  color: #111111 !important;
+  box-shadow: 0 24px 70px rgba(24, 14, 6, 0.44) !important;
+  backdrop-filter: none !important;
+}
+
+.modal-bg-edict .directive-edit-layer .directive-edit-dialog * {
+  color: #111111 !important;
+}
+
+.modal-bg-edict .directive-edit-layer .directive-edit-dialog textarea,
+.modal-bg-edict .directive-edit-layer .directive-edit-dialog button {
+  background: #ffffff !important;
+}
+
+.modal-bg-edict .directive-edit-layer .directive-edit-dialog textarea {
+  border-color: rgba(0, 0, 0, 0.24) !important;
+}
+
+.modal-bg-edict .directive-edit-layer .directive-edit-dialog .directive-list-status.pending {
+  color: #8e3f2c !important;
+}
+
+.modal-bg-edict .directive-edit-layer .directive-edit-dialog .directive-list-status.draft {
+  color: #2f665f !important;
+}
+
+/* Final override: modern decree preview is a readable white document. */
+.modal-bg-edict .decree-scroll,
+.modal-bg-edict .decree-doc-head,
+.modal-bg-edict .decree-scroll-paper {
+  background: #ffffff !important;
+  color: #111111 !important;
+}
+
+.modal-bg-edict .decree-scroll {
+  box-shadow: 0 14px 36px rgba(32, 20, 8, 0.18) !important;
+}
+
+.modal-bg-edict .decree-scroll-body,
+.modal-bg-edict .decree-scroll-edit {
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+  letter-spacing: 0 !important;
+  color: #111111 !important;
+  background: #ffffff !important;
 }

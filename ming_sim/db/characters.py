@@ -5,6 +5,7 @@ _CharactersMixin：拆自原 db.py，方法体逐字未改。"""
 from __future__ import annotations
 
 import json
+import random
 import re
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
@@ -337,6 +338,33 @@ class _CharactersMixin:
             n += 1
         return f"{prefix}{n}"
 
+    def random_portrait_id_from_folder(self, folder: str, fallback_prefix: str = "minister_pool_") -> str:
+        """从 web/public/portraits/<folder>/ 随机分配通用立绘。
+
+        大臣池使用目录池（如 minister_pool/foo.png -> portrait_id=minister_pool/foo）；
+        历史人物专属 minister_<姓名>.png 不参与随机。优先不重复，池图用完后允许复用。
+        """
+        from pathlib import Path
+        from ming_sim.paths import bundled_path
+
+        folder = folder.strip().strip("/")
+        if not folder:
+            return self.next_pool_portrait_id(fallback_prefix)
+
+        portraits_dir = Path(bundled_path("web", "public", "portraits", folder))
+        files = sorted(p for p in portraits_dir.glob("*.png") if p.is_file()) if portraits_dir.is_dir() else []
+        if not files:
+            return self.next_pool_portrait_id(fallback_prefix)
+
+        rows = self.conn.execute(
+            "SELECT portrait_id FROM characters WHERE portrait_id LIKE ?",
+            (folder + "/%",),
+        ).fetchall()
+        used = {str(r["portrait_id"]) for r in rows}
+        all_ids = [f"{folder}/{p.stem}" for p in files]
+        free = [pid for pid in all_ids if pid not in used]
+        return random.choice(free or all_ids)
+
     def set_portrait_id(self, name: str, portrait_id: str) -> None:
         """改某人物的头像标识（如皇帝上传自定义立绘后落库）。"""
         self.conn.execute(
@@ -357,8 +385,12 @@ class _CharactersMixin:
         # 若没有专属 portrait_id，按 office_type 分配预设池头像
         portrait_id = character.portrait_id
         if not portrait_id:
-            prefix = "consort_pool_" if character.office_type == "后宫" else "minister_pool_"
-            portrait_id = self.next_pool_portrait_id(prefix)
+            if character.office_type == "后宫":
+                # 后宫沿用编号池 consort_pool_<N>.png。
+                portrait_id = self.next_pool_portrait_id("consort_pool_")
+            else:
+                # 大臣使用目录随机池 web/public/portraits/minister_pool/*.png。
+                portrait_id = self.random_portrait_id_from_folder("minister_pool")
         source_label = source or ("吏部铨选任命" if character.office_type != "后宫" else "诏书纳妃")
         office_source = source or ("吏部任命" if character.office_type != "后宫" else "诏书纳妃")
         self.conn.execute(

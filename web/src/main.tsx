@@ -1,7 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { Crown, Loader2, X } from "lucide-react";
-import { api, streamChat, streamCourtChat } from "./api";
+import { api, streamChat, streamCourtChat, summarizeCourtChat as summarizeCourtChatApi } from "./api";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDetailModal, RegionDrawer } from "./components/drawers";
 import { ExtractionModal } from "./components/extraction";
 import { GameMenuModal } from "./components/gameMenu";
@@ -590,10 +590,50 @@ function App() {
       setCourtChatInput(message);
       setCourtChatError(err instanceof Error ? err.message : String(err));
     } finally {
+      if (abortController.signal.aborted) {
+        return;
+      }
       if (courtChatAbortRef.current === abortController) {
         courtChatAbortRef.current = null;
         setCourtChatBusy(false);
       }
+    }
+  };
+
+  const stopCourtChat = () => {
+    if (!courtChatAbortRef.current) return;
+    courtChatAbortRef.current.abort();
+    courtChatAbortRef.current = null;
+    if (courtChatDrainTimerRef.current !== null) {
+      window.clearTimeout(courtChatDrainTimerRef.current);
+      courtChatDrainTimerRef.current = null;
+    }
+    courtChatDeltaQueueRef.current = [];
+    setCourtChatBusy(false);
+    setCourtChatBubbles({});
+    setCourtChatError("");
+  };
+
+  const summarizeCourtChat = async (_visibleMinisters: Minister[]) => {
+    if (courtChatBusy) return;
+    const visibleMessages = courtChatLiveMessages
+      .map((message) => ({ ...message, content: message.displayContent ?? message.content }))
+      .filter((message) => message.content.trim());
+    if (!visibleMessages.length) {
+      setCourtChatError("当前屏幕没有可总结的朝会内容。");
+      return;
+    }
+    setCourtChatBusy(true);
+    setCourtChatError("");
+    try {
+      const summary = await summarizeCourtChatApi(visibleMessages);
+      setCourtChatLiveMessages((current) => [...current, summary]);
+      setCourtChatDecision(summary.options?.length ? summary : null);
+      await refreshCourtChat();
+    } catch (err) {
+      setCourtChatError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCourtChatBusy(false);
     }
   };
 
@@ -747,17 +787,32 @@ function App() {
     }
   };
 
-  const writeDecree = async () => {
+  const generateDecree = async (force = false) => {
     setBusy("拟写正式诏书");
     setError("");
     try {
-      const data = await api<{ decree: string }>("/api/decree/write", { method: "POST" });
+      const data = await api<{ decree: string }>("/api/decree/write", {
+        method: "POST",
+        body: JSON.stringify({ force }),
+      });
       setDecree(data.decree);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy("");
     }
+  };
+
+  const writeDecree = async () => {
+    if ((decree || state?.last_decree || "").trim()) {
+      setDecree((current) => current || state?.last_decree || "");
+      return;
+    }
+    await generateDecree();
+  };
+
+  const rewriteDecree = async () => {
+    await generateDecree(true);
   };
 
   const saveDecree = async (text: string) => {
@@ -1046,6 +1101,8 @@ function App() {
         onCourtChatSelectedMinistersChange={setCourtChatSelectedMinisters}
         onCourtChatInputChange={setCourtChatInput}
         onSendCourtChat={sendCourtChat}
+        onStopCourtChat={stopCourtChat}
+        onSummarizeCourtChat={summarizeCourtChat}
         onRefreshCourtChat={refreshCourtChatWithError}
         onCloseCourtChatPanel={() => setCourtChatPanelOpen(false)}
         onChooseCourtChatDecision={chooseCourtChatDecision}
@@ -1173,6 +1230,7 @@ function App() {
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
             onWriteDecree={writeDecree}
+            onRewriteDecree={rewriteDecree}
             onSaveDecree={saveDecree}
             onResetDecree={resetDecree}
             onIssueDecree={issueDecree}
