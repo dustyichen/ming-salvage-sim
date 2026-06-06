@@ -113,6 +113,7 @@ export const streamCourtChat = async (
   onReply: (reply: CourtChatMessage) => void,
   onDelta?: (speaker: string, delta: string) => void,
   onSpeaker?: (speaker: string) => void,
+  onConclusion?: (message: CourtChatMessage) => void,
 ): Promise<CourtChatResponse> => {
   const response = await fetch("/api/court_chat/stream", {
     method: "POST",
@@ -143,6 +144,8 @@ export const streamCourtChat = async (
       const payload = JSON.parse(parsed.data);
       if (parsed.event === "reply") {
         onReply(payload as CourtChatMessage);
+      } else if (parsed.event === "conclusion") {
+        onConclusion?.(payload as CourtChatMessage);
       } else if (parsed.event === "speaker") {
         onSpeaker?.(String(payload.speaker || ""));
       } else if (parsed.event === "delta") {

@@ -61,6 +61,7 @@ function App() {
   const [courtChatBubbles, setCourtChatBubbles] = React.useState<Record<string, string>>({});
   const [courtChatPanelOpen, setCourtChatPanelOpen] = React.useState(false);
   const [courtChatLiveMessages, setCourtChatLiveMessages] = React.useState<CourtChatMessage[]>([]);
+  const [courtChatSelectedMinisters, setCourtChatSelectedMinisters] = React.useState<string[]>([]);
   const courtChatDeltaQueueRef = React.useRef<{ speaker: string; delta: string }[]>([]);
   const courtChatDrainTimerRef = React.useRef<number | null>(null);
   const [composerHint, setComposerHint] = React.useState("");
@@ -396,6 +397,9 @@ function App() {
   });
   const selectedNode = mapNodes.find((node) => node.id === selectedNodeId) || mapNodes[0];
   const ministers = filterMinisters(state.ministers, ministerGroup);
+  const activeCourtMinisterNames = ministers.filter(canAttendCourtChat).map((m) => m.name);
+  const effectiveCourtChatSelectedMinisters = courtChatSelectedMinisters.filter((name) => activeCourtMinisterNames.includes(name));
+  const courtChatRosterSelection = effectiveCourtChatSelectedMinisters;
   const consorts = filterConsorts(state.consorts || [], haremGroup);
   const allCharacters = [...state.ministers, ...(state.consorts || [])];
   const activeMinister = selectedMinister
@@ -493,12 +497,35 @@ function App() {
     }
   };
 
+  const undoLastChat = async () => {
+    if (busy || !activeMinister) return;
+    setBusy("撤回上一轮召对");
+    setError("");
+    setChatNotice("");
+    try {
+      const data = await api<{ history: ChatMessage[]; suggestions: Suggestion[]; directives: Directive[]; pending_count: number }>(
+        `/api/ministers/${encodeURIComponent(activeMinister.name)}/chat/undo`,
+        { method: "POST" },
+      );
+      setChat(data.history);
+      setSuggestions(data.suggestions);
+      setPendingUserMessage("");
+      setStreamingMinisterMessage("");
+      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
+      setChatNotice("已撤回上一轮召对。");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
   const sendCourtChat = async (visibleMinisters: Minister[]) => {
     if (courtChatBusy) return;
     const message = courtChatInput.trim();
     if (!message) return;
     const speakers = visibleMinisters
-      .filter((m) => m.status === "active")
+      .filter((m) => canAttendCourtChat(m) && courtChatRosterSelection.includes(m.name))
       .map((m) => m.name);
     if (!speakers.length) {
       setCourtChatError("朝堂当前没有可参与朝议的大臣。");
@@ -514,7 +541,7 @@ function App() {
     }
     courtChatDeltaQueueRef.current = [];
     setCourtChatPanelOpen(true);
-    setCourtChatLiveMessages([{ role: "emperor", speaker: "皇帝", content: message, displayContent: message }]);
+    setCourtChatLiveMessages((current) => [...current, { role: "emperor", speaker: "皇帝", content: message, displayContent: message }]);
     setCourtChatHistory((current) => [...current, { role: "emperor", speaker: "皇帝", content: message }]);
     try {
       const data = await streamCourtChat(
@@ -533,6 +560,10 @@ function App() {
             if (last && last.role === "minister" && last.speaker === speaker && !last.content) return current;
             return [...current, { role: "minister", speaker, content: "", displayContent: "" }];
           });
+        },
+        (conclusion) => {
+          flushCourtChatDeltas();
+          setCourtChatLiveMessages((current) => [...current, { ...conclusion, role: "conclusion" }]);
         },
       );
       flushCourtChatDeltas();
@@ -647,6 +678,27 @@ function App() {
     try {
       const data = await api<{ directives: Directive[]; pending_count: number }>(`/api/directives/${directiveId}/reject`, { method: "POST" });
       setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const confirmAllDirectives = async () => {
+    const pending = (state?.directives || []).filter((d) => d.status === "pending");
+    if (!pending.length) return;
+    setBusy("一键准奏大臣拟旨");
+    setError("");
+    try {
+      let latest: { directives: Directive[]; pending_count: number } | null = null;
+      for (const directive of pending) {
+        latest = await api<{ directives: Directive[]; pending_count: number }>(`/api/directives/${directive.id}/confirm`, { method: "POST" });
+      }
+      if (latest) {
+        const data = latest;
+        setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -948,6 +1000,8 @@ function App() {
         courtChatBubbles={courtChatBubbles}
         courtChatPanelOpen={courtChatPanelOpen}
         courtChatLiveMessages={courtChatLiveMessages}
+        courtChatSelectedMinisters={courtChatSelectedMinisters}
+        onCourtChatSelectedMinistersChange={setCourtChatSelectedMinisters}
         onCourtChatInputChange={setCourtChatInput}
         onSendCourtChat={sendCourtChat}
         onRefreshCourtChat={refreshCourtChatWithError}
@@ -1035,6 +1089,7 @@ function App() {
             portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
             chat={chat}
             suggestions={suggestions}
+            pendingDirectives={(state.directives || []).filter((d) => d.status === "pending")}
             pendingUserMessage={pendingUserMessage}
             streamingMinisterMessage={streamingMinisterMessage}
             chatNotice={chatNotice}
@@ -1047,6 +1102,9 @@ function App() {
             onSend={sendChat}
             onHint={setComposerHint}
             onFavorite={() => toggleFavorite(activeMinister)}
+            onConfirmDirective={confirmDirective}
+            onRejectDirective={rejectDirective}
+            onUndoLast={undoLastChat}
             onOpenEdict={() => setActiveModal("edict")}
             onClose={guardClose(() => setActiveModal("none"))}
           />
@@ -1077,6 +1135,8 @@ function App() {
             onIssueDecree={issueDecree}
             onConfirmDirective={confirmDirective}
             onRejectDirective={rejectDirective}
+            onConfirmAllDirectives={confirmAllDirectives}
+            onGoToCourtChat={() => { setActiveModal("none"); setDrawerOpen(true); }}
           />
         </FullscreenModal>
       ) : null}
@@ -1148,6 +1208,12 @@ function App() {
     </main>
   );
 }
+
+const canAttendCourtChat = (minister: Minister) => {
+  const office = (minister.office || "").trim();
+  if (minister.status !== "active" || !office) return false;
+  return !/(已故|罢居|罢闲|赋闲|致仕|养病|丁忧|归籍|在野)/.test(office);
+};
 
 
 // HITL 重大抉择弹窗：逐个亲裁本回合决策点，全部选完一次提交续跑结算。

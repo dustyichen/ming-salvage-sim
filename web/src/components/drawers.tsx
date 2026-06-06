@@ -4,6 +4,12 @@ import { MinisterPortrait, PortraitUploadButton, RightDrawer, cacheBust, courtSl
 import { formatMoney, formatSignedMoney, regionMonthlyTax } from "../format";
 import type { Army, Building, CourtChatMessage, GameState, MapNode, Minister, Region, Technology } from "../types";
 
+const canAttendCourtChat = (minister: Minister) => {
+  const office = (minister.office || "").trim();
+  if (minister.status !== "active" || !office) return false;
+  return !/(已故|罢居|罢闲|赋闲|致仕|养病|丁忧|归籍|在野)/.test(office);
+};
+
 export function MinisterCardList({
   list,
   portraitPrefix,
@@ -669,6 +675,8 @@ export function CourtDrawer({
   courtChatBubbles,
   courtChatPanelOpen,
   courtChatLiveMessages,
+  courtChatSelectedMinisters,
+  onCourtChatSelectedMinistersChange,
   onCourtChatInputChange,
   onSendCourtChat,
   onRefreshCourtChat,
@@ -690,6 +698,8 @@ export function CourtDrawer({
   courtChatBubbles: Record<string, string>;
   courtChatPanelOpen: boolean;
   courtChatLiveMessages: CourtChatMessage[];
+  courtChatSelectedMinisters: string[];
+  onCourtChatSelectedMinistersChange: React.Dispatch<React.SetStateAction<string[]>>;
   onCourtChatInputChange: (value: string) => void;
   onSendCourtChat: (ministers: Minister[]) => void;
   onRefreshCourtChat: () => void;
@@ -697,12 +707,56 @@ export function CourtDrawer({
 }) {
   const [q, setQ] = React.useState("");
   const [showHistory, setShowHistory] = React.useState(false);
+  const [courtChatStep, setCourtChatStep] = React.useState<"closed" | "composing">("closed");
+  const [courtChatRosterOpen, setCourtChatRosterOpen] = React.useState(false);
+  const courtChatPanelBodyRef = React.useRef<HTMLDivElement | null>(null);
+  const cleanCourtChatText = (value: string) => value.replace(/\s*<<<臣:([^>\n]+)>>+\s*/g, "\n$1：").trim();
   const filtered = q ? ministers.filter((m) => m.name.includes(q) || (m.office || "").includes(q)) : ministers;
-  const canChat = open && filtered.some((m) => m.status === "active");
+  const activeFiltered = filtered.filter(canAttendCourtChat);
+  const activeNames = activeFiltered.map((m) => m.name);
+  const selectedNames = courtChatSelectedMinisters.filter((name) => activeNames.includes(name));
+  const courtChatAvailable = ministerGroup === "内阁+六部" || ministerGroup === "收藏";
+  const canChat = open && courtChatAvailable && selectedNames.length > 0;
+  const toggleCourtMinister = (name: string) => {
+    onCourtChatSelectedMinistersChange((current) => {
+      const activeSet = new Set(activeNames);
+      const scoped = current.filter((n) => activeSet.has(n));
+      return scoped.includes(name) ? scoped.filter((n) => n !== name) : [...scoped, name];
+    });
+  };
+  const selectAllCourtMinisters = () => onCourtChatSelectedMinistersChange(activeNames);
+  const clearCourtMinisters = () => onCourtChatSelectedMinistersChange([]);
+  const startCourtChat = () => {
+    if (!courtChatAvailable || !activeFiltered.length) return;
+    if (!selectedNames.length) selectAllCourtMinisters();
+    setCourtChatRosterOpen(true);
+  };
+  const confirmCourtRoster = () => {
+    if (!selectedNames.length) return;
+    setCourtChatRosterOpen(false);
+    setCourtChatStep("composing");
+  };
   React.useEffect(() => {
     if (!open) return;
     onRefreshCourtChat();
   }, [open, onRefreshCourtChat]);
+  React.useEffect(() => {
+    const el = courtChatPanelBodyRef.current;
+    if (!el || !courtChatPanelOpen) return;
+    el.scrollTop = el.scrollHeight;
+  }, [courtChatPanelOpen, courtChatLiveMessages]);
+  React.useEffect(() => {
+    if (!courtChatAvailable) {
+      setCourtChatRosterOpen(false);
+      setCourtChatStep("closed");
+      return;
+    }
+    onCourtChatSelectedMinistersChange((current) => {
+      const activeSet = new Set(activeNames);
+      const scoped = current.filter((name) => activeSet.has(name));
+      return scoped.length ? scoped : activeNames;
+    });
+  }, [courtChatAvailable, ministerGroup, open, activeNames.join("|"), onCourtChatSelectedMinistersChange]);
   return (
     <>
       {open && <button className="drawer-scrim" aria-label="收起" onClick={onClose} />}
@@ -715,6 +769,15 @@ export function CourtDrawer({
           <button className="icon-button" aria-label="收起" onClick={onClose}><X size={16} /></button>
         </div>
         <div className="segmented">
+          <button
+            className="court-chat-tab-button"
+            type="button"
+            disabled={!courtChatAvailable || !activeFiltered.length}
+            onClick={startCourtChat}
+            title={courtChatAvailable ? "召集当前页大臣开朝会" : "朝会请在内阁+六部或收藏页召集"}
+          >
+            朝会
+          </button>
           {["内阁+六部", "收藏", "在职", "全部"].map((group) => (
             <button
               className={ministerGroup === group ? "active" : ""}
@@ -749,11 +812,15 @@ export function CourtDrawer({
                 </div>
                 <button className="icon-button" onClick={onCloseCourtChatPanel} aria-label="关闭朝会奏对"><X size={15} /></button>
               </header>
-              <div className="court-chat-panel-body">
+              <div className="court-chat-panel-body" ref={courtChatPanelBodyRef}>
                 {courtChatLiveMessages.map((m, i) => (
                   <article key={`${m.speaker}-${i}-${m.content}`} className={`court-chat-panel-line ${m.role}`}>
-                    <strong>{m.speaker}</strong>
-                    <p>{m.displayContent ?? m.content}</p>
+                    <div className="court-chat-panel-speaker">
+                      {m.role === "emperor" ? "御问" : m.role === "conclusion" ? "朝议结论" : m.speaker}
+                    </div>
+                    <div className="court-chat-panel-bubble">
+                      <p>{m.displayContent ?? m.content}</p>
+                    </div>
                   </article>
                 ))}
                 {courtChatBusy ? <div className="court-chat-panel-thinking">殿上诸臣正相继出班...</div> : null}
@@ -761,29 +828,45 @@ export function CourtDrawer({
             </section>
           </>
         ) : null}
-        <div className="court-chat-dock">
-          <button className="court-chat-history-btn" onClick={() => setShowHistory((v) => !v)} title="查看本月朝会聊天历史">
-            <MessageSquareText size={16} />
-            <span>{courtChatHistory.length}</span>
-          </button>
-          <textarea
-            className="court-chat-input"
-            value={courtChatInput}
-            placeholder="垂询群臣..."
-            rows={1}
-            onChange={(e) => onCourtChatInputChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                onSendCourtChat(filtered);
-              }
-            }}
-          />
-          <button className="court-chat-send" disabled={!canChat || courtChatBusy || !courtChatInput.trim()} onClick={() => onSendCourtChat(filtered)}>
-            {courtChatBusy ? "群臣奏对中" : "发问"}
-          </button>
-          {courtChatError ? <div className="court-chat-error">{courtChatError}</div> : null}
-          {showHistory ? (
+        {courtChatRosterOpen ? (
+          <>
+            <div className="court-chat-roster-scrim" aria-hidden="true" />
+            <section className="court-chat-roster-modal" role="dialog" aria-modal="true" aria-label="召集朝会">
+              <header className="court-chat-roster-modal-head">
+                <div>
+                  <b>召集朝会</b>
+                  <span>{ministerGroup} · 只列可参议在职大臣</span>
+                </div>
+                <button className="icon-button" onClick={() => setCourtChatRosterOpen(false)} aria-label="关闭召集名单"><X size={15} /></button>
+              </header>
+              <div className="court-chat-roster-modal-actions">
+                <button type="button" onClick={selectAllCourtMinisters}>全选当前页</button>
+                <button type="button" onClick={clearCourtMinisters}>清空</button>
+                <span>已选 {selectedNames.length} / {activeFiltered.length}</span>
+              </div>
+              <div className="court-chat-roster-modal-list">
+                {activeFiltered.map((m) => (
+                  <button
+                    key={m.name}
+                    type="button"
+                    className={`court-chat-roster-card ${selectedNames.includes(m.name) ? "selected" : ""}`}
+                    onClick={() => toggleCourtMinister(m.name)}
+                  >
+                    <strong>{m.name}</strong>
+                    <span>{m.office || m.office_type || "在职"}</span>
+                  </button>
+                ))}
+              </div>
+              <footer className="court-chat-roster-modal-foot">
+                <button type="button" onClick={() => setCourtChatRosterOpen(false)}>取消</button>
+                <button type="button" disabled={!selectedNames.length} onClick={confirmCourtRoster}>开始朝会</button>
+              </footer>
+            </section>
+          </>
+        ) : null}
+        {showHistory ? (
+          <>
+            <div className="court-chat-history-scrim" aria-hidden="true" />
             <div className="court-chat-history" role="dialog" aria-label="本月朝会聊天历史">
               <div className="court-chat-history-head">
                 <b>本月朝会</b>
@@ -793,13 +876,44 @@ export function CourtDrawer({
                 {courtChatHistory.length ? courtChatHistory.map((m, i) => (
                   <div key={`${m.speaker}-${i}-${m.content}`} className={`court-chat-line ${m.role}`}>
                     <strong>{m.speaker}</strong>
-                    <span>{m.content}</span>
+                    <span>{cleanCourtChatText(m.content)}</span>
                   </div>
                 )) : <div className="court-chat-empty">本月尚无朝会奏对。</div>}
               </div>
             </div>
-          ) : null}
+          </>
+        ) : null}
+        {courtChatStep === "composing" && courtChatAvailable ? (
+        <div className="court-chat-dock open step-composing">
+          <button className="court-chat-history-btn" onClick={() => setShowHistory((v) => !v)} title="查看本月朝会聊天历史">
+            <MessageSquareText size={16} />
+            <span>{courtChatHistory.length}</span>
+          </button>
+          <div className="court-chat-roster">
+            <button className="court-chat-roster-all" type="button" onClick={() => setCourtChatRosterOpen(true)}>换人</button>
+            {selectedNames.map((name) => (
+              <span key={name} className="court-chat-roster-chip selected">{name}</span>
+            ))}
+          </div>
+          <textarea
+            className="court-chat-input"
+            value={courtChatInput}
+            placeholder="垂询群臣..."
+            rows={1}
+            onChange={(e) => onCourtChatInputChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                onSendCourtChat(activeFiltered);
+              }
+            }}
+          />
+          <button className="court-chat-send" disabled={!canChat || courtChatBusy || !courtChatInput.trim()} onClick={() => onSendCourtChat(activeFiltered)}>
+            {courtChatBusy ? "群臣奏对中" : "发问"}
+          </button>
+          {courtChatError ? <div className="court-chat-error">{courtChatError}</div> : null}
         </div>
+        ) : null}
       </aside>
     </>
   );

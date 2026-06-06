@@ -48,7 +48,7 @@ def infer_office_type_from_office(office: str, current_type: str = "") -> str:
         return "司礼监"
     if re.search(r"东厂|提督东厂", text):
         return "东厂"
-    if re.search(r"锦衣卫|北镇抚司|镇抚司|都指挥使|千户", text):
+    if re.search(r"锦衣卫|北镇抚司|镇抚司|指挥使|千户", text):
         return "锦衣卫"
     if re.search(r"都察院|都御史|御史|巡按", text):
         return "都察院"

@@ -302,6 +302,22 @@ class _TurnsMixin:
         )
         self.conn.commit()
 
+    def delete_latest_pending_directive_by_actor(self, actor: str, turn: int) -> int:
+        """删该大臣本回合最后一道仍 pending（未准未驳）的拟旨。撤回召对时连带删。
+        返回被删的 directive_id；无可删返回 0。已准(draft)/已驳的不动。"""
+        row = self.conn.execute(
+            "SELECT id FROM turn_directives "
+            "WHERE turn = ? AND actor = ? AND status = 'pending' "
+            "ORDER BY id DESC LIMIT 1",
+            (int(turn), actor),
+        ).fetchone()
+        if row is None:
+            return 0
+        directive_id = int(row["id"])
+        self.conn.execute("DELETE FROM turn_directives WHERE id = ?", (directive_id,))
+        self.conn.commit()
+        return directive_id
+
     def count_pending_directives(self, state: GameState) -> int:
         """本回合待核定（pending）的大臣拟旨数。颁诏前须为 0。"""
         row = self.conn.execute(

@@ -1,5 +1,5 @@
 import React from "react";
-import { Check, Crown, Edit3, Landmark, Loader2, Lock, MessageSquare, ScrollText, Send, Star, Trash2, X } from "lucide-react";
+import { Check, Crown, Edit3, Landmark, Loader2, Lock, MessageSquare, ScrollText, Send, Star, Trash2, Undo2, X } from "lucide-react";
 import { api } from "../api";
 import { ExtractionView } from "./extraction";
 import { FullscreenModal, MinisterPortrait, cacheBust } from "./hud";
@@ -504,6 +504,7 @@ export function ChatModal({
   portraitPrefix,
   chat,
   suggestions,
+  pendingDirectives,
   pendingUserMessage,
   streamingMinisterMessage,
   chatNotice,
@@ -516,6 +517,9 @@ export function ChatModal({
   onSend,
   onHint,
   onFavorite,
+  onConfirmDirective,
+  onRejectDirective,
+  onUndoLast,
   onOpenEdict,
   onClose,
 }: {
@@ -523,6 +527,7 @@ export function ChatModal({
   portraitPrefix: string;
   chat: ChatMessage[];
   suggestions: Suggestion[];
+  pendingDirectives: Directive[];
   pendingUserMessage: string;
   streamingMinisterMessage: string;
   chatNotice: string;
@@ -535,6 +540,9 @@ export function ChatModal({
   onSend: (text?: string) => void;
   onHint: (value: string) => void;
   onFavorite: () => void;
+  onConfirmDirective: (directiveId: number) => void;
+  onRejectDirective: (directiveId: number) => void;
+  onUndoLast: () => void;
   onOpenEdict: () => void;
   onClose: () => void;
 }) {
@@ -645,6 +653,19 @@ export function ChatModal({
           {chatNotice && <div className="chat-system-note">{chatNotice}</div>}
           {error && <div className="chat-system-note danger" role="alert">{error}</div>}
         </div>
+        {pendingDirectives.length > 0 && (
+          <div className="chat-pending-directives" role="region" aria-label="待朱批大臣拟旨">
+            {pendingDirectives.map((directive) => (
+              <div className="chat-pending-item" key={directive.id}>
+                <p><b>#{directive.id}</b> {directive.text}</p>
+                <div className="chat-pending-tools">
+                  <button className="vermilion-yes" onClick={() => onConfirmDirective(directive.id)} disabled={!!busy}><Check size={14} />准奏</button>
+                  <button className="vermilion-no" onClick={() => onRejectDirective(directive.id)} disabled={!!busy}><X size={14} />驳</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="chat-composer">
           <div className="hitl-bar">
             {suggestions.map((suggestion) => (
@@ -676,6 +697,15 @@ export function ChatModal({
             <button className={`primary-action ${!input.trim() ? "is-empty" : ""}`} onClick={handleSend} disabled={!!busy}>
               <Send size={15} />
               发送
+            </button>
+            <button
+              className="secondary-action composer-undo"
+              onClick={onUndoLast}
+              disabled={!!busy || !chat.some((m) => m.role === "minister")}
+              title="撤回最后一轮召对（删除上一问一答，并清掉大臣对应记忆）"
+            >
+              <Undo2 size={15} />
+              撤回
             </button>
             <button className="secondary-action composer-exit" onClick={onClose}>
               <X size={15} />
@@ -711,6 +741,8 @@ export function EdictModal({
   onIssueDecree,
   onConfirmDirective,
   onRejectDirective,
+  onConfirmAllDirectives,
+  onGoToCourtChat,
 }: {
   state: GameState;
   directiveText: string;
@@ -733,6 +765,8 @@ export function EdictModal({
   onIssueDecree: () => void;
   onConfirmDirective: (directiveId: number) => void;
   onRejectDirective: (directiveId: number) => void;
+  onConfirmAllDirectives: () => void;
+  onGoToCourtChat: () => void;
 }) {
   const pendingDirectives = state.directives.filter((d) => d.status === "pending");
   const draftDirectives = state.directives.filter((d) => d.status !== "pending");
@@ -803,7 +837,14 @@ export function EdictModal({
         <section className="desk-pane desk-memorials">
           {hasPending && (
             <div className="pending-directives" role="region" aria-label="待核定大臣拟旨">
-              <h3>朱批待定 · 大臣拟旨（{pendingDirectives.length}）</h3>
+              <div className="pending-directives-head">
+                <h3>朱批待定 · 大臣拟旨（{pendingDirectives.length}）</h3>
+                {pendingDirectives.length > 1 && (
+                  <button className="vermilion-yes pending-confirm-all" onClick={onConfirmAllDirectives} disabled={!!busy}>
+                    <Check size={14} />全部准奏
+                  </button>
+                )}
+              </div>
               {pendingDirectives.map((directive) => (
                 <div className="directive-item pending" key={directive.id}>
                   <div className="directive-head">
@@ -869,6 +910,9 @@ export function EdictModal({
 
       <div className="desk-footer">
         {hasPending && <small className="pending-hint">尚有 {pendingDirectives.length} 道大臣拟旨待朱批（准/驳），核定后方可拟诏。</small>}
+        <button className="seal-btn-ghost" onClick={onGoToCourtChat} disabled={!!busy}>
+          <MessageSquare size={15} />去庭议
+        </button>
         <button
           className="seal-btn-compose"
           onClick={onWriteDecree}

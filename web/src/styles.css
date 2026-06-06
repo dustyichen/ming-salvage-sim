@@ -1459,20 +1459,18 @@ select:focus-visible {
 .court-chat-panel {
   position: fixed;
   left: 50%;
-  top: 50%;
+  top: 42px;
   z-index: 5000;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: min(1180px, calc(100vw - 96px));
-  height: min(76vh, 760px);
-  border: 1px solid rgba(255, 210, 112, 0.36);
+  height: min(68vh, calc(100vh - 238px), 720px);
+  min-height: 360px;
+  border: 1px solid rgba(128, 91, 34, 0.28);
   border-radius: 8px;
-  background:
-    radial-gradient(100% 80% at 50% 0%, rgba(118, 49, 22, 0.36), transparent 58%),
-    linear-gradient(180deg, rgba(42, 24, 9, 0.94), rgba(17, 10, 4, 0.92));
-  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 230, 170, 0.12);
-  backdrop-filter: blur(7px);
-  transform: translate(-50%, -52%);
+  background: #fff8df;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  transform: translateX(-50%);
   overflow: hidden;
 }
 
@@ -1480,7 +1478,7 @@ select:focus-visible {
   position: fixed;
   inset: 0;
   z-index: 4999;
-  background: rgba(9, 6, 3, 0.38);
+  background: rgba(24, 18, 10, 0.24);
   pointer-events: none;
 }
 
@@ -1490,7 +1488,8 @@ select:focus-visible {
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
-  border-bottom: 1px solid rgba(255, 210, 112, 0.2);
+  border-bottom: 1px solid rgba(128, 91, 34, 0.18);
+  background: #fff3c9;
 }
 
 .court-chat-panel-head b,
@@ -1499,53 +1498,111 @@ select:focus-visible {
 }
 
 .court-chat-panel-head b {
-  color: #ffe8a0;
+  color: #17110a;
   font-size: 1.02rem;
 }
 
 .court-chat-panel-head span {
   margin-top: 2px;
-  color: rgba(255, 226, 166, 0.72);
+  color: rgba(23, 17, 10, 0.62);
   font-size: 0.78rem;
 }
 
 .court-chat-panel-body {
   min-height: 0;
   overflow-y: auto;
-  padding: 12px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 16px 18px 22px;
 }
 
 .court-chat-panel-line {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: min(76%, 820px);
   gap: 5px;
-  margin-bottom: 11px;
-  padding: 10px 12px;
-  border: 1px solid rgba(255, 225, 158, 0.12);
-  border-radius: 7px;
-  background: rgba(255, 245, 210, 0.08);
 }
 
 .court-chat-panel-line.emperor {
-  background: rgba(135, 44, 34, 0.34);
-  border-color: rgba(255, 195, 120, 0.18);
+  align-self: flex-end;
+  align-items: flex-end;
 }
 
-.court-chat-panel-line strong {
-  color: #ffe8a0;
-  font-size: 0.9rem;
+.court-chat-panel-line.conclusion {
+  align-self: center;
+  align-items: center;
+  max-width: min(82%, 880px);
+}
+
+.court-chat-panel-speaker {
+  padding: 0 8px;
+  color: #17110a;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.court-chat-panel-bubble {
+  position: relative;
+  max-width: 100%;
+  padding: 10px 13px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 8px;
+  color: #15110b;
+  background: #fffaf0;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+}
+
+.court-chat-panel-bubble::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 15px;
+  width: 12px;
+  height: 12px;
+  border-left: 1px solid rgba(0, 0, 0, 0.14);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.14);
+  background: #fffaf0;
+  transform: rotate(45deg);
+}
+
+.court-chat-panel-line.emperor .court-chat-panel-bubble {
+  border-color: rgba(0, 0, 0, 0.16);
+  background: #ffffff;
+}
+
+.court-chat-panel-line.conclusion .court-chat-panel-bubble {
+  border-color: rgba(177, 125, 28, 0.38);
+  background: #fffdf6;
+}
+
+.court-chat-panel-line.conclusion .court-chat-panel-bubble::before {
+  display: none;
+}
+
+.court-chat-panel-line.emperor .court-chat-panel-bubble::before {
+  left: auto;
+  right: -7px;
+  border-left: 0;
+  border-bottom: 0;
+  border-right: 1px solid rgba(0, 0, 0, 0.16);
+  border-top: 1px solid rgba(0, 0, 0, 0.16);
+  background: #ffffff;
 }
 
 .court-chat-panel-line p {
   margin: 0;
-  color: #fff0c4;
+  color: #15110b;
   font-size: 0.94rem;
   line-height: 1.68;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .court-chat-panel-thinking {
   padding: 4px 2px;
-  color: rgba(255, 226, 166, 0.72);
+  color: rgba(23, 17, 10, 0.62);
   font-size: 0.86rem;
 }
 
@@ -1553,37 +1610,76 @@ select:focus-visible {
   position: fixed;
   left: 50%;
   bottom: 22px;
-  z-index: 5001;
+  z-index: 4998;
   display: grid;
-  grid-template-columns: 46px minmax(280px, 680px) auto;
+  grid-template-columns: 46px minmax(260px, 1fr) auto;
+  grid-template-rows: auto auto;
   align-items: center;
   gap: 8px;
-  width: min(920px, calc(100vw - 72px));
+  width: min(980px, calc(100vw - 72px));
   padding: 8px;
-  border: 1px solid rgba(255, 210, 112, 0.34);
+  border: 1px solid rgba(128, 91, 34, 0.26);
   border-radius: 6px;
-  background: linear-gradient(180deg, rgba(48, 27, 9, 0.76), rgba(19, 11, 4, 0.72));
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.36);
+  background: rgba(255, 248, 223, 0.94);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.26);
   backdrop-filter: blur(6px);
   transform: translateX(-50%);
 }
 
+.court-chat-roster {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.court-chat-roster-chip,
+.court-chat-roster-all {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid rgba(128, 91, 34, 0.2);
+  border-radius: 5px;
+  color: rgba(23, 17, 10, 0.78);
+  background: rgba(255, 242, 196, 0.74);
+}
+
+.court-chat-roster-chip {
+  display: inline-flex;
+  align-items: center;
+}
+
+.court-chat-roster-chip.selected,
+.court-chat-roster-all:hover,
+.court-chat-roster-chip:hover {
+  color: #17110a;
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.16);
+}
+
 .court-chat-history-btn,
+.court-chat-start,
 .court-chat-send {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
   min-height: 38px;
-  border: 1px solid rgba(255, 210, 112, 0.26);
+  border: 1px solid rgba(128, 91, 34, 0.24);
   border-radius: 5px;
-  color: #ffe8a0;
-  background: rgba(91, 42, 15, 0.75);
+  color: #17110a;
+  background: #fff1bf;
 }
 
 .court-chat-history-btn:hover,
+.court-chat-start:hover:not(:disabled),
 .court-chat-send:hover:not(:disabled) {
-  background: rgba(143, 47, 37, 0.86);
+  background: #ffe29a;
+}
+
+.court-chat-start {
+  min-width: 150px;
 }
 
 .court-chat-send:disabled {
@@ -1592,19 +1688,20 @@ select:focus-visible {
 }
 
 .court-chat-input {
+  grid-column: 2;
   min-height: 38px;
   max-height: 92px;
   resize: vertical;
   padding: 8px 10px;
-  border: 1px solid rgba(255, 220, 145, 0.28);
+  border: 1px solid rgba(128, 91, 34, 0.28);
   border-radius: 5px;
-  color: #fff5d0;
-  background: rgba(255, 248, 224, 0.12);
+  color: #17110a;
+  background: rgba(255, 253, 245, 0.86);
   outline: none;
 }
 
 .court-chat-input::placeholder {
-  color: rgba(255, 232, 160, 0.62);
+  color: rgba(23, 17, 10, 0.48);
 }
 
 .court-chat-error {
@@ -1620,18 +1717,166 @@ select:focus-visible {
   background: rgba(94, 18, 12, 0.82);
 }
 
+.court-chat-roster-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 5010;
+  background: rgba(9, 6, 3, 0.46);
+}
+
+.court-chat-roster-modal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 5011;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: min(880px, calc(100vw - 72px));
+  height: min(72vh, 680px);
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  color: #15110b;
+  background: #fffdf7;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.48);
+  transform: translate(-50%, -50%);
+  overflow: hidden;
+}
+
+.court-chat-roster-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  background: #ffffff;
+}
+
+.court-chat-roster-modal-head b,
+.court-chat-roster-modal-head span {
+  display: block;
+}
+
+.court-chat-roster-modal-head b {
+  color: #15110b;
+  font-size: 1.05rem;
+}
+
+.court-chat-roster-modal-head span {
+  margin-top: 3px;
+  color: rgba(21, 17, 11, 0.62);
+  font-size: 0.82rem;
+}
+
+.court-chat-roster-modal-actions,
+.court-chat-roster-modal-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.court-chat-roster-modal-actions button,
+.court-chat-roster-modal-foot button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 5px;
+  color: #15110b;
+  background: #ffffff;
+}
+
+.court-chat-roster-modal-actions button:hover,
+.court-chat-roster-modal-foot button:hover:not(:disabled) {
+  background: #f4ead8;
+}
+
+.court-chat-roster-modal-actions span {
+  margin-left: auto;
+  color: rgba(21, 17, 11, 0.66);
+  font-weight: 700;
+}
+
+.court-chat-roster-modal-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  align-content: start;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.court-chat-roster-card {
+  min-height: 74px;
+  display: grid;
+  gap: 5px;
+  align-content: center;
+  justify-items: start;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 7px;
+  color: #15110b;
+  background: #ffffff;
+  text-align: left;
+}
+
+.court-chat-roster-card strong {
+  font-size: 1rem;
+}
+
+.court-chat-roster-card span {
+  color: rgba(21, 17, 11, 0.62);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.court-chat-roster-card.selected {
+  border-color: rgba(143, 47, 37, 0.5);
+  background: #fff3e8;
+  box-shadow: inset 0 0 0 1px rgba(143, 47, 37, 0.16);
+}
+
+.court-chat-roster-modal-foot {
+  justify-content: flex-end;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  border-bottom: 0;
+  background: #ffffff;
+}
+
+.court-chat-roster-modal-foot button:last-child {
+  color: #17110a;
+  border-color: rgba(128, 91, 34, 0.28);
+  background: #ffe29a;
+}
+
+.court-chat-roster-modal-foot button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.court-chat-history-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 5002;
+  background: rgba(24, 18, 10, 0.28);
+}
+
 .court-chat-history {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 10px);
-  width: min(520px, calc(100vw - 72px));
-  max-height: 42vh;
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 5003;
+  width: min(820px, calc(100vw - 80px));
+  height: min(70vh, 680px);
   display: grid;
   grid-template-rows: auto 1fr;
-  border: 1px solid rgba(255, 210, 112, 0.34);
+  border: 1px solid rgba(128, 91, 34, 0.28);
   border-radius: 6px;
-  background: linear-gradient(180deg, rgba(38, 22, 8, 0.94), rgba(17, 10, 4, 0.94));
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.46);
+  background: #fff8df;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.34);
+  transform: translate(-50%, -50%);
   overflow: hidden;
 }
 
@@ -1640,8 +1885,9 @@ select:focus-visible {
   align-items: center;
   justify-content: space-between;
   padding: 8px 10px;
-  border-bottom: 1px solid rgba(255, 210, 112, 0.18);
-  color: #ffe8a0;
+  border-bottom: 1px solid rgba(128, 91, 34, 0.18);
+  color: #17110a;
+  background: #fff3c9;
 }
 
 .court-chat-history-list {
@@ -1656,21 +1902,22 @@ select:focus-visible {
   margin-bottom: 9px;
   padding: 8px 9px;
   border-radius: 6px;
-  background: rgba(255, 245, 210, 0.08);
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid rgba(128, 91, 34, 0.14);
 }
 
 .court-chat-line.emperor {
-  background: rgba(135, 44, 34, 0.36);
+  background: rgba(255, 238, 177, 0.72);
 }
 
 .court-chat-line strong {
-  color: #ffe8a0;
+  color: #17110a;
   font-size: 0.82rem;
 }
 
 .court-chat-line span,
 .court-chat-empty {
-  color: #f6e3bd;
+  color: #17110a;
   line-height: 1.55;
 }
 
@@ -3263,6 +3510,66 @@ select {
   background: rgba(185, 73, 55, 0.1);
 }
 
+/* 召对内待批拟旨：朱批准奏/驳，紧贴输入框上方 */
+.chat-pending-directives {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 8px;
+  padding: 9px 11px;
+  border: 1px solid rgba(170, 50, 36, 0.5);
+  border-left: 4px solid rgba(170, 50, 36, 0.82);
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(176, 58, 40, 0.1), rgba(176, 58, 40, 0.03));
+}
+
+.chat-pending-item {
+  display: grid;
+  gap: 6px;
+}
+
+.chat-pending-item p {
+  margin: 0;
+  line-height: 1.5;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+}
+
+.chat-pending-item p b {
+  color: #8a5a1e;
+}
+
+.chat-pending-tools {
+  display: flex;
+  gap: 6px;
+}
+
+.chat-pending-tools button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 28px;
+  padding: 3px 12px;
+  font-size: 0.82rem;
+  border-radius: 3px;
+}
+
+.chat-pending-tools .vermilion-yes {
+  background: linear-gradient(180deg, #c0432f, #8a261b);
+  color: #ffe9d8;
+  border: 1px solid rgba(150, 36, 28, 0.6);
+}
+.chat-pending-tools .vermilion-yes:hover {
+  background: linear-gradient(180deg, #d24c36, #9a2c1f);
+}
+
+.chat-pending-tools .vermilion-no {
+  background: rgba(252, 244, 236, 0.9);
+  color: #9a2c1f;
+  border: 1px solid rgba(150, 36, 28, 0.7);
+}
+.chat-pending-tools .vermilion-no:hover {
+  background: rgba(176, 58, 40, 0.14);
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
@@ -3410,10 +3717,37 @@ button:disabled {
 
 /* 朱批准驳：朱砂红，仪式感 */
 .directive-tools .vermilion-yes,
-.directive-tools .vermilion-no {
+.directive-tools .vermilion-no,
+.chat-pending-tools .vermilion-yes,
+.chat-pending-tools .vermilion-no,
+.pending-confirm-all {
   font-weight: 700;
   font-family: "Noto Serif SC", "Songti SC", serif;
   letter-spacing: 0.05em;
+}
+
+/* 待批拟旨表头：标题 + 一键全部准奏 */
+.pending-directives-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pending-confirm-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 28px;
+  padding: 3px 12px;
+  font-size: 0.82rem;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #c0432f, #8a261b);
+  color: #ffe9d8;
+  border: 1px solid rgba(150, 36, 28, 0.6);
+}
+.pending-confirm-all:hover {
+  background: linear-gradient(180deg, #d24c36, #9a2c1f);
 }
 
 .directive-edit {
@@ -3976,6 +4310,7 @@ button:disabled {
 
 /* 召对发送 / 退出按钮：黑字白底 */
 .modal-bg-chat .composer-actions .primary-action,
+.modal-bg-chat .composer-actions .composer-undo,
 .modal-bg-chat .composer-actions .composer-exit {
   color: #1a1410 !important;
   background: rgba(252, 249, 240, 0.92) !important;
@@ -3983,7 +4318,8 @@ button:disabled {
   font-weight: 700 !important;
 }
 
-.modal-bg-chat .composer-actions .primary-action:hover {
+.modal-bg-chat .composer-actions .primary-action:hover,
+.modal-bg-chat .composer-actions .composer-undo:hover {
   background: rgba(255, 235, 190, 0.96) !important;
 }
 
@@ -4143,10 +4479,27 @@ button:disabled {
   color: rgba(255,220,140,0.75) !important;
 }
 
+.court-drawer .segmented .court-chat-tab-button {
+  min-width: 66px;
+  color: #fff8d7 !important;
+  background: rgba(91, 42, 15, 0.8) !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 210, 112, 0.16);
+}
+
+.court-drawer .segmented .court-chat-tab-button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
 .court-drawer .segmented button.active,
 .court-drawer .segmented button:hover {
   color: #ffe8a0 !important;
   background: rgba(143,47,37,0.75) !important;
+}
+
+.court-drawer .segmented .court-chat-tab-button:hover:not(:disabled) {
+  color: #15110b !important;
+  background: #fffaf0 !important;
 }
 
 /* 地图详情小面板背景 */

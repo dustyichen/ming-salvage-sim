@@ -637,6 +637,22 @@ class GameSession:
                     result.tax_adjusted = summary
         return result
 
+    def revoke_last_chat(self, minister_name: str) -> bool:
+        """撤回该大臣本回合最后一轮召对发言：删存档行 + 裁 agno 末轮 run + 重建 agent。
+        返回是否真的撤回了一轮。临时召见人物不落库，直接返回 False。"""
+        if self.registry is None:
+            raise RuntimeError("GameSession.begin_turn() 未调用。")
+        if minister_name in self.temporary_characters:
+            return False
+        session_id = self.registry.session_ids.get(minister_name, "")
+        revoked = self.db.revoke_last_chat_round(minister_name, self.state.turn, session_id)
+        if revoked:
+            # 连带删该轮可能产的 pending 拟旨（未准未驳的最后一道）。已准/已驳不动。
+            self.db.delete_latest_pending_directive_by_actor(minister_name, self.state.turn)
+            # agno 已裁，重建 agent 让其从 db 重载被裁后的对话历史（清掉内存缓存的旧 run）。
+            self.registry.refresh(minister_name)
+        return revoked
+
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。
         吏部尚书 LLM 已判过史实合理性；代码端只做姓名查重与字段兜底，不做历史校验。

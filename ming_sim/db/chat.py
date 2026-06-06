@@ -1,13 +1,14 @@
 """chat_messages：召对对话存档（持久化，进程重启恢复内存缓存）。
 
-_ChatMixin。原撤回机制（chat_turns / chat_turn_rollback_items + agno runs 裁剪）已废——
-召对流式中途退出＝前端中断线程，整轮不落库（副作用循环在流式跑完后才执行，中断即无副作用），
-故无需事后回滚。只保留对话消息存档。
+_ChatMixin。撤回最后一轮召对发言：删 chat_messages 末尾 user+minister 两行 + 裁掉
+agno_sessions 里对应 session 的最后一条 run（让大臣后续对话不再带这轮上下文）。
+流式中途退出整轮不落库（无副作用），故撤回只需处理已落库的完整轮。
 """
 
 from __future__ import annotations
 
-from typing import Dict, List
+import json
+from typing import Any, Dict, List, Tuple
 
 
 class _ChatMixin:
@@ -67,6 +68,92 @@ class _ChatMixin:
         )
         self.conn.commit()
         return int(cur.lastrowid)
+
+    def last_chat_round_ids(self, minister_name: str, turn: int) -> Tuple[int, int]:
+        """取该大臣本回合最后一轮 (user_id, minister_id)。无完整轮返回 (0, 0)。
+        一轮＝紧邻的 user 行 + minister 行；按 id 取末尾 minister 行，再取其前最近的 user 行。"""
+        m_row = self.conn.execute(
+            "SELECT id FROM chat_messages "
+            "WHERE minister_name = ? AND turn = ? AND role = 'minister' "
+            "ORDER BY id DESC LIMIT 1",
+            (minister_name, int(turn)),
+        ).fetchone()
+        if m_row is None:
+            return (0, 0)
+        minister_id = int(m_row["id"])
+        u_row = self.conn.execute(
+            "SELECT id FROM chat_messages "
+            "WHERE minister_name = ? AND turn = ? AND role = 'user' AND id < ? "
+            "ORDER BY id DESC LIMIT 1",
+            (minister_name, int(turn), minister_id),
+        ).fetchone()
+        user_id = int(u_row["id"]) if u_row else 0
+        return (user_id, minister_id)
+
+    def revoke_last_chat_round(self, minister_name: str, turn: int, agno_session_id: str = "") -> bool:
+        """撤回该大臣本回合最后一轮召对：删 user+minister 两行 + 裁掉 agno 末轮 run。
+        无可撤回轮返回 False。agno_session_id 给空则跳过 agno 裁剪（只删存档行）。"""
+        user_id, minister_id = self.last_chat_round_ids(minister_name, turn)
+        if not minister_id:
+            return False
+        ids = [minister_id] + ([user_id] if user_id else [])
+        placeholders = ",".join("?" for _ in ids)
+        self.conn.execute(
+            f"DELETE FROM chat_messages WHERE id IN ({placeholders})", ids
+        )
+        if agno_session_id:
+            length = self.agno_runs_length(agno_session_id)
+            if length > 0:
+                self._truncate_agno_runs(agno_session_id, length - 1)
+        self.conn.commit()
+        return True
+
+    # --- agno_sessions runs 裁剪（minister agent 跨轮对话历史存这里）---
+
+    def agno_runs_length(self, session_id: str) -> int:
+        if not session_id or not self._table_exists("agno_sessions"):
+            return 0
+        row = self.conn.execute(
+            "SELECT runs FROM agno_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return 0
+        runs, _encoded_as_string = self._decode_agno_runs(row["runs"])
+        return len(runs)
+
+    def _decode_agno_runs(self, raw: Any) -> Tuple[List[Any], bool]:
+        if raw in (None, ""):
+            return [], False
+        try:
+            decoded = json.loads(raw)
+            encoded_as_string = isinstance(decoded, str)
+            if encoded_as_string:
+                decoded = json.loads(decoded or "[]")
+            return (decoded if isinstance(decoded, list) else []), encoded_as_string
+        except (TypeError, ValueError):
+            return [], False
+
+    def _encode_agno_runs(self, runs: List[Any], encoded_as_string: bool) -> str:
+        if encoded_as_string:
+            return json.dumps(json.dumps(runs, ensure_ascii=False), ensure_ascii=False)
+        return json.dumps(runs, ensure_ascii=False)
+
+    def _truncate_agno_runs(self, session_id: str, keep_count: int) -> None:
+        if not session_id or not self._table_exists("agno_sessions"):
+            return
+        row = self.conn.execute(
+            "SELECT runs FROM agno_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return
+        runs, encoded_as_string = self._decode_agno_runs(row["runs"])
+        kept = runs[: max(0, int(keep_count))]
+        self.conn.execute(
+            "UPDATE agno_sessions SET runs = ?, updated_at = strftime('%s','now') WHERE session_id = ?",
+            (self._encode_agno_runs(kept, encoded_as_string), session_id),
+        )
 
     def load_court_chat_history(self, turn: int) -> List[Dict[str, str]]:
         """读取某一回合（月）的朝会聊天室记录。"""

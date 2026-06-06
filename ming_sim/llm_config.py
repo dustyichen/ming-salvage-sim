@@ -16,6 +16,7 @@ RUNTIME_GAME_PATH = user_data_path("runtime_game.json")
 # 游戏玩法设置默认值（全局，跨局共享）。
 GAME_SETTINGS_DEFAULTS = {
     "hitl_min_decisions": 1,  # 每回合 simulator 至少产出的重大决策点数（0=不强制，宁缺毋滥）
+    "court_chat_debate_rounds": 3,  # 朝会聊天室未形成结论前最多驱动几轮 ReAct 交锋。
 }
 
 
@@ -164,13 +165,20 @@ def load_runtime_game() -> Dict[str, object]:
         out["hitl_min_decisions"] = max(0, min(5, int(data.get("hitl_min_decisions", out["hitl_min_decisions"]))))
     except (TypeError, ValueError):
         pass
+    try:
+        out["court_chat_debate_rounds"] = max(1, min(8, int(data.get("court_chat_debate_rounds", out["court_chat_debate_rounds"]))))
+    except (TypeError, ValueError):
+        pass
     return out
 
 
-def save_runtime_game(hitl_min_decisions: int) -> Dict[str, object]:
+def save_runtime_game(hitl_min_decisions: int, court_chat_debate_rounds: int = 3) -> Dict[str, object]:
     """写 data/runtime_game.json。clamp 到 [0,5]。返回落盘后的设置。"""
     os.makedirs(os.path.dirname(RUNTIME_GAME_PATH), exist_ok=True)
-    payload = {"hitl_min_decisions": max(0, min(5, int(hitl_min_decisions)))}
+    payload = {
+        "hitl_min_decisions": max(0, min(5, int(hitl_min_decisions))),
+        "court_chat_debate_rounds": max(1, min(8, int(court_chat_debate_rounds))),
+    }
     with open(RUNTIME_GAME_PATH, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
     return payload

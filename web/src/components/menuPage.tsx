@@ -144,12 +144,15 @@ export function GameSettingsModal({
   onClose,
   onSaved,
 }: {
-  initial?: { hitl_min_decisions: number };
+  initial?: { hitl_min_decisions: number; court_chat_debate_rounds?: number };
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
   const [minDecisions, setMinDecisions] = React.useState<number>(
     initial?.hitl_min_decisions ?? 1
+  );
+  const [courtChatDebateRounds, setCourtChatDebateRounds] = React.useState<number>(
+    initial?.court_chat_debate_rounds ?? 3
   );
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
@@ -161,7 +164,10 @@ export function GameSettingsModal({
       await api("/api/menu/game_settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hitl_min_decisions: minDecisions }),
+        body: JSON.stringify({
+          hitl_min_decisions: minDecisions,
+          court_chat_debate_rounds: courtChatDebateRounds,
+        }),
       });
       await onSaved();
     } catch (e: any) {
@@ -190,6 +196,25 @@ export function GameSettingsModal({
             <option value={3}>3 · 每回合至少 3 个</option>
             <option value={4}>4 · 每回合至少 4 个</option>
             <option value={5}>5 · 每回合至少 5 个</option>
+          </select>
+        </label>
+        <label>
+          朝会交锋轮数{" "}
+          <small className="menu-hint">
+            （群臣未形成结论前，最多驱动几轮继续廷辩。默认 3，数字越高越能吵，耗时和 token 也越多。）
+          </small>
+          <select
+            value={courtChatDebateRounds}
+            onChange={(e) => setCourtChatDebateRounds(Number(e.target.value))}
+          >
+            <option value={1}>1 · 简短交锋</option>
+            <option value={2}>2 · 适中交锋</option>
+            <option value={3}>3 · 默认交锋</option>
+            <option value={4}>4 · 更激烈</option>
+            <option value={5}>5 · 长朝会</option>
+            <option value={6}>6 · 很能吵</option>
+            <option value={7}>7 · 持续廷辩</option>
+            <option value={8}>8 · 极长廷辩</option>
           </select>
         </label>
         <div className="menu-modal-actions">
