@@ -46,12 +46,25 @@ def strip_json_fence(text: str) -> str:
     return text.strip()
 
 
-def format_money(value: int) -> str:
-    return f"{value}{MONEY_UNIT}"
+def money_value(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
-def format_money_delta(value: int) -> str:
-    sign = "+" if value > 0 else ""
+def format_money(value: object) -> str:
+    amount = money_value(value)
+    if abs(amount) < 1 and amount:
+        liang = amount * 10000
+        text = f"{liang:.2f}".rstrip("0").rstrip(".")
+        return f"{text}两"
+    text = f"{amount:.4f}".rstrip("0").rstrip(".")
+    return f"{text}{MONEY_UNIT}"
+
+
+def format_money_delta(value: object) -> str:
+    sign = "+" if money_value(value) > 0 else ""
     return f"{sign}{format_money(value)}"
 
 

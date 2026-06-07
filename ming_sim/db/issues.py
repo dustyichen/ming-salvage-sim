@@ -119,6 +119,8 @@ class _IssuesMixin:
         effect_on_fail: Dict[str, object] | None = None,
         resolve_condition: str = "",
         fail_condition: str = "",
+        is_manual: bool = False,
+        duration_turns: int = 0,
     ) -> int:
         if kind not in ("situation", "initiative"):
             raise ValueError(f"issue kind 非法：{kind}")
@@ -134,8 +136,8 @@ class _IssuesMixin:
                 phase, stage_text, status, severity, region_hint, faction_hint,
                 tags, ongoing_effects, cancellable, cancel_cost,
                 effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
-                last_advance_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                last_advance_turn, is_manual, duration_turns
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 kind, title, origin_kind, origin_ref, state.turn,
@@ -149,10 +151,98 @@ class _IssuesMixin:
                 json.dumps(effect_on_fail or {}, ensure_ascii=False),
                 resolve_condition, fail_condition,
                 state.turn,
+                1 if is_manual else 0,
+                max(0, int(duration_turns or 0)),
             ),
         )
         self.conn.commit()
         return int(cur.lastrowid)
+
+    # ----- 玩家手动管理的 decree 局势（is_manual=1）-----
+
+    def count_active_manual_issues(self) -> int:
+        """当前进行中的手动 decree 局势条数（用于上限校验）。"""
+        return int(self.conn.execute(
+            "SELECT COUNT(*) FROM issues WHERE status='active' AND is_manual=1"
+        ).fetchone()[0])
+
+    def get_manual_issue(self, issue_id: int) -> sqlite3.Row | None:
+        """取一条手动局势（任意状态）；非手动返回 None。"""
+        row = self.conn.execute(
+            "SELECT * FROM issues WHERE id=? AND is_manual=1", (int(issue_id),)
+        ).fetchone()
+        return row
+
+    def update_manual_issue(
+        self,
+        issue_id: int,
+        *,
+        title: str | None = None,
+        duration_turns: int | None = None,
+    ) -> bool:
+        """改手动局势：目标(title) / 持续回合数(duration_turns)。
+        仅 is_manual=1 且 active 可改。返回是否实际更新。"""
+        row = self.conn.execute(
+            "SELECT id, status, is_manual FROM issues WHERE id=?", (int(issue_id),)
+        ).fetchone()
+        if row is None or int(row["is_manual"]) != 1 or row["status"] != "active":
+            return False
+        sets, params = [], []
+        if title is not None and title.strip():
+            sets.append("title=?")
+            params.append(title.strip()[:60])
+        if duration_turns is not None:
+            sets.append("duration_turns=?")
+            params.append(max(0, int(duration_turns)))
+        if not sets:
+            return False
+        sets.append("updated_at=CURRENT_TIMESTAMP")
+        params.append(int(issue_id))
+        self.conn.execute(
+            f"UPDATE issues SET {', '.join(sets)} WHERE id=?", params
+        )
+        self.conn.commit()
+        return True
+
+    def delete_manual_issue(self, issue_id: int) -> bool:
+        """彻底删除一条手动局势（连带其 issue_advances）。仅 is_manual=1 可删。"""
+        row = self.conn.execute(
+            "SELECT id, is_manual FROM issues WHERE id=?", (int(issue_id),)
+        ).fetchone()
+        if row is None or int(row["is_manual"]) != 1:
+            return False
+        self.conn.execute("DELETE FROM issue_advances WHERE issue_id=?", (int(issue_id),))
+        self.conn.execute("DELETE FROM issues WHERE id=?", (int(issue_id),))
+        self.conn.commit()
+        return True
+
+    def expire_due_manual_issues(self, state: GameState) -> List[int]:
+        """到期手动局势自动撤销（status='dropped'，无奖励）。返回被撤销的 id 列表。
+        本函数在结算链里跑在 state.next_period() 之前——结算「第 N 回合」时 state.turn 仍为 N。
+        「持续 N 回合」＝新建回合 origin_turn 起，活满 N 个回合，第 origin_turn+N 回合结算时撤销：
+        判定 state.turn - origin_turn >= duration_turns。例：第1回合新建、持续2回合 → 活过第1、2
+        回合，第3回合结算（state.turn=3，3-1>=2）到期撤销。"""
+        rows = self.conn.execute(
+            """
+            SELECT id, origin_turn, duration_turns FROM issues
+            WHERE status='active' AND is_manual=1 AND duration_turns>0
+            """
+        ).fetchall()
+        expired: List[int] = []
+        for r in rows:
+            if int(state.turn) - int(r["origin_turn"]) >= int(r["duration_turns"]):
+                self.conn.execute(
+                    """
+                    UPDATE issues SET status='dropped', closed_turn=?,
+                        last_advance_turn=?, updated_at=CURRENT_TIMESTAMP
+                    WHERE id=?
+                    """,
+                    (int(state.turn), int(state.turn), int(r["id"])),
+                )
+                expired.append(int(r["id"]))
+        if expired:
+            self.conn.commit()
+        return expired
 
     def advance_issue(
         self,
@@ -170,6 +260,9 @@ class _IssuesMixin:
         row = self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
             return None
+        narrative = re.sub(r"\s+", " ", str(narrative or "").strip())
+        if len(narrative) > 80:
+            narrative = narrative[:80].rstrip() + "..."
         # 崩坏能力由 effect_on_fail 是否非空判定：有崩坏效果=会崩坏（bar 能到 0、failed 终结）；
         # 空=不会崩坏（天灾/正面机遇等不可控或无失败态局势，bar 下限钳到 1，永不 failed，
         # 只靠 ongoing_effects 每月持续流血）。
@@ -234,6 +327,9 @@ class _IssuesMixin:
         row = self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
             return None
+        narrative = re.sub(r"\s+", " ", str(narrative or "").strip())
+        if len(narrative) > 80:
+            narrative = narrative[:80].rstrip() + "..."
         # 不可崩坏局势（effect_on_fail 空：天灾/不可控灾害）没有「失败终结」态——LLM 误判 failed
         # 时拒绝结案，留 active 继续靠 ongoing_effects 流血，只能靠 resolved（赈济平息）收尾。
         if reason == "failed" and not json.loads(row["effect_on_fail"] or "{}"):
@@ -282,6 +378,9 @@ class _IssuesMixin:
         row = self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
             return None
+        narrative = re.sub(r"\s+", " ", str(narrative or "").strip())
+        if len(narrative) > 80:
+            narrative = narrative[:80].rstrip() + "..."
         self.conn.execute(
             "UPDATE issues SET status='dropped', closed_turn=?, last_advance_turn=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (state.turn, state.turn, issue_id),
@@ -309,6 +408,13 @@ class _IssuesMixin:
             (issue_id, limit),
         ).fetchall()
 
+    def list_issue_advances(self, issue_id: int) -> List[sqlite3.Row]:
+        """取某事项全部推进日志，按发生顺序返回，供月末推演回看完整脉络。"""
+        return self.conn.execute(
+            "SELECT * FROM issue_advances WHERE issue_id=? ORDER BY turn ASC, id ASC",
+            (issue_id,),
+        ).fetchall()
+
     def record_issue_economy_move(
         self,
         state: GameState,
@@ -332,10 +438,10 @@ class _IssuesMixin:
         if category != "局势遗产":
             net_pct = int(self.legacy_modifiers(state).get(account, 0) or 0)  # type: ignore[arg-type]
             if net_pct:
-                delta = self.apply_legacy_pct(int(delta), net_pct)
-        before = int(state.metrics[account])
-        after = before + int(delta)
-        actual = after - before
+                delta = self.apply_legacy_pct(float(delta), net_pct)
+        before = float(state.metrics[account])
+        after = round(before + float(delta), 4)
+        actual = round(after - before, 4)
         if actual == 0:
             return 0
         state.metrics[account] = after
@@ -466,9 +572,9 @@ class _IssuesMixin:
         return agg
 
     @staticmethod
-    def apply_legacy_pct(base: int, net_pct: int) -> int:
+    def apply_legacy_pct(base: float, net_pct: int) -> float:
         """遗产百分比修正：base>=0 → base×(1+net/100)；base<0 → base×(1-net/100)。net=0 原样。"""
         if net_pct == 0 or base == 0:
-            return int(base)
+            return base
         factor = (1 + net_pct / 100.0) if base >= 0 else (1 - net_pct / 100.0)
-        return int(round(base * factor))
+        return round(base * factor, 4)

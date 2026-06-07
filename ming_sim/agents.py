@@ -526,6 +526,28 @@ def create_chapter_memory_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
     )
 
 
+def create_minister_recap_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """大臣私人对话纪要：把某大臣本回合与皇帝的奏对（含已办成的拟旨/任命/密令动作）浓缩成
+    {recap} JSON，供其下回合召见时回忆「已替皇帝办了什么」，避免空转重复拟旨。一次性，不持久化。"""
+    del agno_db
+    ctx = _ctx()
+    return Agent(
+        name="起居注史官",
+        id="minister-recap",
+        model=create_chat_model(
+            llm_config,
+            temperature=0.4,
+            top_p=0.85,
+            max_tokens=max(800, llm_config.max_tokens),
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=[ctx.game_world_prompt, ctx.minister_recap_prompt],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
     """国史编纂官：读全程章节记忆 + 结局类型，生成史评式结局总结（纯文本流式）。一次性，不持久化。"""
     del agno_db

@@ -12,8 +12,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.models.message import Message
-
 from ming_sim.agents import bind_content as _bind_agents
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.constants import TURN_UNIT
@@ -467,29 +465,6 @@ class GameSession:
             return self.temporary_characters[name]
         return character_from_name(name)
 
-    def _retrieve_memories_for_message(self, message: str) -> str:
-        """注入近几回合章节记忆，让大臣知道近来朝局大事。章节记忆是回合粒度全局摘要，
-        直接取最近 N 回合，不再按关键词检索（旧原子记忆已废）。"""
-        from ming_sim.token_stats import tlog
-        try:
-            chapters = self.db.list_chapter_memories(upto_turn=self.state.turn, recent=4)
-            if not chapters:
-                return message
-            lines = ["【近来朝局（近几月章节）】"]
-            for c in chapters:
-                body = (c.get("body") or "").strip()
-                if not body:
-                    continue
-                lines.append(f"- {c['year']}年{c['period']}月：{body}")
-            if len(lines) == 1:
-                return message
-            new_msg = "\n".join(lines) + "\n\n" + message
-            tlog(f"[chat/chapter-recall] hit={len(chapters)} ({len(new_msg)}字)")
-            return new_msg
-        except Exception as exc:
-            tlog(f"[chat/chapter-recall] 失败跳过：{exc}")
-            return message
-
     def _temporary_character(self, name: str) -> Character:
         clean_name = str(name or "").strip()
         if not clean_name:
@@ -555,35 +530,29 @@ class GameSession:
         self,
         minister_name: str,
         message: str,
-        history_messages: Optional[List["Message"]] = None,
     ) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
         大臣 propose_directive 产生的草案以 status='pending' 入库，
         作为 proposed_directive 返回，确认/驳回由调用方下达。
 
-        history_messages：调用方自管的对话历史（真 user/assistant 消息，标 from_history，
-        跨月连续按时序）。作本轮 input 前缀，本月新问/记忆/草案只拼到末尾这条新 user message。
-        给了它就对本轮关 agno 自动 history（add_history_to_context=False），避免重复/时序倒置。"""
+        月内历史交回 agno 每月一个 session 自管（session_id=minister-{name}-turn-{turn}，
+        agent 配 add_history_to_context=True + num_history_runs）：agno run 里天然带 tool
+        调用与 result，大臣下一轮看得到自己拟过的旨真入了档，不再空转重复拟旨。跨月失忆由月末
+        LLM 压缩的「私人对话纪要」补（build_minister_recap_brief 注入 system）。"""
         if self.registry is None:
             raise RuntimeError("GameSession.begin_turn() 未调用。")
         character = self._character(minister_name)
         # 控制指令（退下/换人/技能）由 CLI 层 parse_court_command 处理；
         # GameSession.chat 只负责与 agent 对话与 tool 截获。
         agent = self.registry.get(character)
-        augmented = self._retrieve_memories_for_message(message)
         # 本回合已核定草案随大臣议事滚动累加，agent system 在月初冻结拿不到——
         # 每次 chat 前置实时 draft_line 到 user message 头，确保大臣看得到兄弟大臣最新动作。
+        # 这是跨 agent 信息，agno 单 session 给不了，必须每轮注入。
+        augmented = message
         draft_line = self.registry.build_draft_line()
         if draft_line and draft_line != "无":
             augmented = f"【本{TURN_UNIT}已核定草案】{draft_line}\n\n{augmented}"
-        # 历史作前缀按 role 排列，本月新问是末尾这条 user message（draft/记忆只挂在它上）。
-        # agno 的 List[Message] input 分支只收 Message/dict，混入 str 会被静默丢弃，故本月新问
-        # 也包成 Message（不标 from_history → 正常入 agno run）。本轮关 agno 自动 history。
-        if history_messages:
-            run_input: Any = list(history_messages) + [Message(role="user", content=augmented)]
-            run_output = agent.run(run_input, add_history_to_context=False)
-        else:
-            run_output = agent.run(augmented)
+        run_output = agent.run(augmented)
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
         answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)

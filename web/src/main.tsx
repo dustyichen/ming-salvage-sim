@@ -1076,6 +1076,8 @@ function App() {
         open={situationDrawerOpen}
         issues={state.issues}
         closedIssues={state.closed_this_turn || []}
+        maxDecreeIssues={state.max_decree_issues ?? 10}
+        onChanged={() => loadState()}
         onClose={() => setSituationDrawerOpen(false)}
       />
 
@@ -1283,6 +1285,15 @@ function App() {
           onOpenMinister={(name) => {
             setActiveModal("chat");
             setSelectedMinister(name);
+          }}
+          onDelete={async (order) => {
+            try {
+              await api(`/api/secret_orders/${order.id}`, { method: "DELETE" });
+              const { orders } = await api<{ orders: SecretOrder[] }>("/api/secret_orders");
+              setSecretOrders(orders);
+            } catch (e: any) {
+              window.alert(e?.message || "删除密令失败");
+            }
           }}
         />
       ) : null}

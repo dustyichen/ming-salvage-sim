@@ -223,7 +223,7 @@ export function GameSettingsModal({
   onClose,
   onSaved,
 }: {
-  initial?: { hitl_min_decisions: number; court_chat_debate_rounds?: number };
+  initial?: { hitl_min_decisions: number; court_chat_debate_rounds?: number; max_decree_issues?: number };
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -232,6 +232,9 @@ export function GameSettingsModal({
   );
   const [courtChatDebateRounds, setCourtChatDebateRounds] = React.useState<number>(
     initial?.court_chat_debate_rounds ?? 3
+  );
+  const [maxDecreeIssues, setMaxDecreeIssues] = React.useState<number>(
+    initial?.max_decree_issues ?? 10
   );
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
@@ -246,6 +249,7 @@ export function GameSettingsModal({
         body: JSON.stringify({
           hitl_min_decisions: minDecisions,
           court_chat_debate_rounds: courtChatDebateRounds,
+          max_decree_issues: maxDecreeIssues,
         }),
       });
       await onSaved();
@@ -294,6 +298,23 @@ export function GameSettingsModal({
             <option value={6}>6 · 很能吵</option>
             <option value={7}>7 · 持续廷辩</option>
             <option value={8}>8 · 极长廷辩</option>
+          </select>
+        </label>
+        <label>
+          手动局势上限{" "}
+          <small className="menu-hint">
+            （皇帝可手动新建/管理的 decree 局势同时进行条数上限。默认 10。
+            <b>调高会让月末推演每月多带这些局势进盘面叙述，token 消耗随之增加。</b>）
+          </small>
+          <select
+            value={maxDecreeIssues}
+            onChange={(e) => setMaxDecreeIssues(Number(e.target.value))}
+          >
+            <option value={10}>10 · 默认</option>
+            <option value={15}>15 · 略增（token ↑）</option>
+            <option value={20}>20 · 较多（token ↑↑）</option>
+            <option value={25}>25 · 很多（token ↑↑↑）</option>
+            <option value={30}>30 · 上限（token 大幅增加）</option>
           </select>
         </label>
         <div className="menu-modal-actions">

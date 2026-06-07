@@ -1,11 +1,11 @@
 {
-  "_comment": "extractor 全字段覆盖测试集。每 case：directive=诏书草案文本；expect_fields=本诏书应触发的顶层字段（抽出 JSON 里非空即命中）；start_ym/jump_to/sql/set_metric/cheat 可选（透传 direct_decree_probe 同名参数）。cheat 把既成事实直接拼到邸报喂 extractor，用于强制某字段必现。覆盖 4 档房 23 顶层字段：internal(国势变化/钱粮收支/财政制度变化/新立月度收支/裁撤月度收支/派系变化/阶级变化/地区变化) issues(局势推进/新立局势/撤销局势/结案局势) military_external(军队变化/新建军队/势力变化/四方动向) personnel_secret(人事变更/人物状态变化/人物易主/后宫册封/密令副作用/密令结案/崇祯结局)",
+  "_comment": "extractor 全字段覆盖测试集。每 case：directive=诏书草案文本；expect_fields=本诏书应触发的顶层字段（抽出 JSON 里非空即命中）；start_ym/jump_to/sql/set_metric/cheat 可选（透传 direct_decree_probe 同名参数）。cheat 把既成事实直接拼到邸报喂 extractor，用于强制某字段必现。覆盖 4 档房 23 顶层字段：internal(国势变化/钱粮收支/财政制度变化/新立月度收支/裁撤月度收支/派系变化/阶级变化/地区变化) issues(局势推进/新立局势/撤销局势/结案局势) military_external(军队变化/新建军队/势力变化/四方动向) personnel_secret(人事变更/人物状态变化/人物易主/后宫册封/密令进度/密令结案/崇祯结局)",
   "all_fields": [
     "国势变化", "钱粮收支", "财政制度变化", "新立月度收支", "裁撤月度收支",
     "派系变化", "阶级变化", "地区变化",
     "局势推进", "新立局势", "撤销局势", "结案局势",
     "军队变化", "新建军队", "势力变化", "四方动向",
-    "人事变更", "人物状态变化", "人物易主", "后宫册封", "密令副作用", "密令结案", "崇祯结局"
+    "人事变更", "人物状态变化", "人物易主", "后宫册封", "密令进度", "密令结案", "崇祯结局"
   ],
   "cases": [
     {"id": "c001_chaojia_neiku", "directive": "查抄魏忠贤逆党田宅赀财，本月已籍没实银四百六十万两，尽充内帑入内库", "cheat": "本月抄没魏党逆产实收银四百六十万两，已入内库内帑。", "expect_fields": ["钱粮收支"]},
@@ -52,7 +52,7 @@
     {"id": "c039_yizhu_guizheng", "directive": "流寇头目某某就抚归正，复归朝廷", "cheat": "本月某流寇头目就抚反正，归 ming。", "expect_fields": ["人物易主"]},
     {"id": "c040_hougong_cefeng", "directive": "册封田氏为贵妃，正位中宫之次", "cheat": "本月诏书明文册封田氏为贵妃。", "expect_fields": ["后宫册封"]},
     {"id": "c041_hougong_feizhi", "directive": "册封某氏为皇贵妃", "cheat": "本月诏书明文册封某氏为皇贵妃。", "expect_fields": ["后宫册封"]},
-    {"id": "c042_miling_fuzuoyong", "directive": "密旨查办盐政贪墨一案，本月查至两淮运司账目", "sql": ["INSERT INTO secret_orders (id, turn_issued, due_turn, year_issued, period_issued, minister_name, title, content, status) VALUES (901, 1, 4, 1631, 8, '骆养性', '密查盐政', '密查两淮盐政贪墨', 'active')"], "cheat": "密旨动向：盐政密查（密令编号901）本月已查至两淮运司账目，下一步指向运同某某，风声渐有走漏。", "expect_fields": ["密令副作用"]},
+    {"id": "c042_miling_fuzuoyong", "directive": "密旨查办盐政贪墨一案，本月查至两淮运司账目", "sql": ["INSERT INTO secret_orders (id, turn_issued, due_turn, year_issued, period_issued, minister_name, title, content, status) VALUES (901, 1, 4, 1631, 8, '骆养性', '密查盐政', '密查两淮盐政贪墨', 'active')"], "cheat": "密旨动向：盐政密查（密令编号901）本月已查至两淮运司账目，下一步指向运同某某，风声渐有走漏。", "expect_fields": ["密令进度"]},
     {"id": "c043_miling_jiean", "directive": "盐政密查案核议已毕，实据齐全", "sql": ["INSERT INTO secret_orders (id, turn_issued, due_turn, year_issued, period_issued, minister_name, title, content, status) VALUES (902, 1, 4, 1631, 8, '骆养性', '盐政核议', '盐政密查核议', 'pending_review')"], "cheat": "密旨核议：盐政密查（密令编号902）实据齐全，可据此拿人定罪，案当办结。", "expect_fields": ["密令结案"]},
 
     {"id": "c050_combo_chaojia_bushang", "directive": "查抄阉党逆产入内库四百万，并发内帑三十万两补宣大欠饷", "cheat": "本月抄阉党逆产四百万入内库；又发内帑三十万两补宣大军欠饷。", "expect_fields": ["钱粮收支", "军队变化"]},
@@ -115,7 +115,7 @@
     {"id": "c102_neg_taolun", "directive": "陕西巡抚请赈银三十万，户部称库空未能给，仅在朝堂讨论未决", "expect_fields": [], "neg_check_fields": ["钱粮收支"], "skip_in_summary": true, "neg_note": "【已知无效负样本，不计入有效结果】directive 写了具体赈银数目，extractor 易据此抽钱粮收支；『讨论未决不落账』需 simulator 把请款演成讨论叙事，LLM 判定不稳。属测试构造难度，非 extractor bug"},
     {"id": "c103_neg_qianxiang_weidao", "directive": "宣大诸军欠饷六十万，户部尚在筹画，无银离库", "expect_fields": [], "neg_check_fields": ["钱粮收支"], "neg_note": "欠额存在但无收支，不应写补饷（负样本不给cheat）"},
 
-    {"id": "c104_miling_fuzuoyong2", "directive": "密旨查办勋戚走私一案，本月已查至京营某将名下", "sql": ["INSERT INTO secret_orders (id, turn_issued, due_turn, year_issued, period_issued, minister_name, title, content, status) VALUES (903, 1, 5, 1631, 8, '骆养性', '密查勋戚走私', '密查勋戚通番走私', 'active')"], "cheat": "密旨动向：勋戚走私密查（密令编号903）本月已查至京营某将名下，下一步指向其姻亲，已有人察觉风声。", "expect_fields": ["密令副作用"]},
+    {"id": "c104_miling_fuzuoyong2", "directive": "密旨查办勋戚走私一案，本月已查至京营某将名下", "sql": ["INSERT INTO secret_orders (id, turn_issued, due_turn, year_issued, period_issued, minister_name, title, content, status) VALUES (903, 1, 5, 1631, 8, '骆养性', '密查勋戚走私', '密查勋戚通番走私', 'active')"], "cheat": "密旨动向：勋戚走私密查（密令编号903）本月已查至京营某将名下，下一步指向其姻亲，已有人察觉风声。", "expect_fields": ["密令进度"]},
     {"id": "c105_miling_jiean2", "directive": "勋戚走私密查核议，然线索中断证据不足", "sql": ["INSERT INTO secret_orders (id, turn_issued, due_turn, year_issued, period_issued, minister_name, title, content, status) VALUES (904, 1, 5, 1631, 8, '骆养性', '走私核议', '勋戚走私核议', 'pending_review')"], "cheat": "密旨核议：勋戚走私密查（密令编号904）线索中断、证据不足，案以失败了结。", "expect_fields": ["密令结案"]},
     {"id": "c106_combo_full_neizheng", "directive": "查抄某逆产二百万入国库，加征商税月增十万，并赈陕西十万两放粮安民", "cheat": "本月抄逆产二百万入国库；加征商税月增十万；陕西放赈十万两，农民满意度升、动乱降、民心略振。", "expect_fields": ["钱粮收支", "财政制度变化", "地区变化", "阶级变化", "国势变化"]}
   ]

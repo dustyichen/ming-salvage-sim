@@ -8,8 +8,12 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
+from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
+
+from ming_sim.agents import parse_agent_json, run_agent_text
 from ming_sim.constants import (
     TURN_UNIT, REGION_SCORE_FIELDS, ARMY_SCORE_FIELDS, FISCAL_SCORE_FIELDS,
     REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES,
@@ -25,7 +29,8 @@ from ming_sim.flows import (
     _apply_faction_dict,
     _apply_metric_dict,
 )
-from ming_sim.models import Event, GameState
+from ming_sim.llm_model import create_chat_model
+from ming_sim.models import Event, GameState, LLMConfig
 
 _content: Optional[GameContent] = None
 
@@ -362,11 +367,77 @@ def _apply_issue_fiscal(db: GameDB, state: GameState, ops: object, reason: str) 
             print(f"[WARN] issue effect fiscal 落库失败：{exc}；op={op}")
 
 
-def issue_to_payload(row: sqlite3.Row, recent_advances: List[sqlite3.Row]) -> Dict[str, object]:
-    """喂给推演 agent 的事项精简视图：状态、进度、效果、最近一次推进。"""
+def _compact_issue_log(text: object, max_chars: int = 80) -> str:
+    """压缩写入 issue_advances / 推演 payload 的单条事项日志。"""
+    note = re.sub(r"\s+", " ", str(text or "").strip())
+    if len(note) > max_chars:
+        note = note[:max_chars].rstrip() + "..."
+    return note
+
+
+def make_issue_log_compactor(
+    llm_config: Optional[LLMConfig] = None,
+    agno_db: Optional[SqliteDb] = None,
+) -> Callable[[object], str]:
+    """返回 issue 短日志压缩器：优先 LLM 保义压缩，失败时硬截断兜底。"""
+    if llm_config is None:
+        return _compact_issue_log
+
+    agent = Agent(
+        name="事项日志誊清书办",
+        id="issue-log-compactor",
+        model=create_chat_model(
+            llm_config,
+            temperature=0.0,
+            top_p=0.7,
+            max_tokens=120,
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=[
+            "你只做事项推进日志压缩。输入是一段较长的局势推进/结案/撤销叙述；"
+            "请保留本回合造成进度变化的关键事实，去掉旧背景、解释、修辞和机制词。"
+            "只输出合法 JSON：{\"log\":\"...\"}。log 必须是中文单句，80字内。"
+        ],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+    def _compress(text: object) -> str:
+        original = re.sub(r"\s+", " ", str(text or "").strip())
+        if len(original) <= 80:
+            return original
+        try:
+            raw = run_agent_text(
+                agent,
+                json.dumps({"text": original}, ensure_ascii=False),
+                tag="issue-log-compact",
+            )
+            data = parse_agent_json(raw)
+            log = str(data.get("log") or "").strip() if isinstance(data, dict) else ""
+            if log:
+                return _compact_issue_log(log)
+        except Exception as exc:
+            print(f"[WARN] issue log LLM 压缩失败，改用截断：{exc}")
+        return _compact_issue_log(original)
+
+    return _compress
+
+
+def issue_to_payload(row: sqlite3.Row, advances: List[sqlite3.Row]) -> Dict[str, object]:
+    """喂给推演 agent 的事项精简视图：状态、进度、效果、完整推进日志。"""
     keys = row.keys() if hasattr(row, "keys") else []
     resolve_cond = row["resolve_condition"] if "resolve_condition" in keys else ""
     fail_cond = row["fail_condition"] if "fail_condition" in keys else ""
+    timeline = [
+        {
+            "id": int(a["id"]),
+            "turn": int(a["turn"]),
+            "narrative": _compact_issue_log(a["narrative"]),
+        }
+        for a in advances
+    ]
+    latest = timeline[-1] if timeline else None
     return {
         "issue_id": int(row["id"]),
         "kind": row["kind"],
@@ -380,12 +451,10 @@ def issue_to_payload(row: sqlite3.Row, recent_advances: List[sqlite3.Row]) -> Di
         "结案条件": resolve_cond or "(未填)",
         "失败条件": fail_cond or "(未填)",
         "cancellable": row["cancellable"],
+        "推进日志": timeline,
         f"上{TURN_UNIT}推进": (
-            {
-                "delta_bar": int(recent_advances[0]["delta_bar"]),
-                "narrative": recent_advances[0]["narrative"],
-            }
-            if recent_advances else None
+            {"turn": latest["turn"], "narrative": latest["narrative"]}
+            if latest else None
         ),
     }
 
@@ -965,7 +1034,9 @@ def apply_issue_tracker_output(
     db: GameDB,
     state: GameState,
     tracker_output: Dict[str, object],
+    log_compactor: Optional[Callable[[object], str]] = None,
 ) -> Dict[str, object]:
+    compact_log = log_compactor or _compact_issue_log
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
     applied_new: List[Dict[str, object]] = []
@@ -981,7 +1052,7 @@ def apply_issue_tracker_output(
         delta_bar = int(adv.get("delta_bar") or 0)
         inertia_delta = int(adv.get("inertia_delta") or 0)
         stage_text = str(adv.get("stage_text") or "")[:120]
-        narrative = str(adv.get("narrative") or "")[:400]
+        narrative = compact_log(adv.get("narrative") or "")
         metric_delta_raw = adv.get("metric_delta") or {}
         applied_metrics = _apply_metric_dict(state, metric_delta_raw if isinstance(metric_delta_raw, dict) else {}, db=db)
         new_row = db.advance_issue(
@@ -1108,7 +1179,7 @@ def apply_issue_tracker_output(
         if reason not in ("resolved", "failed"):
             print(f"[WARN] close_issues: reason 非法 '{reason}'，跳过 issue {issue_id}")
             continue
-        narrative = str(cl.get("narrative") or "")[:400]
+        narrative = compact_log(cl.get("narrative") or "")
         try:
             new_row = db.close_issue(state, issue_id, reason=reason, narrative=narrative)
         except Exception as exc:
@@ -1166,7 +1237,7 @@ def apply_issue_tracker_output(
                 trigger_kind="decree",
                 delta_bar=0,
                 stage_text=row["stage_text"],
-                narrative=str(cn.get("narrative") or "陛下欲罢，然此事非诏可消。")[:400],
+                narrative=compact_log(cn.get("narrative") or "陛下欲罢，然此事非诏可消。"),
                 metric_delta={"皇威": -2},
             )
             state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) - 2)
@@ -1181,7 +1252,7 @@ def apply_issue_tracker_output(
             _apply_faction_dict(db, cost.get("factions") or {})
         db.cancel_issue(
             state, issue_id,
-            narrative=str(cn.get("narrative") or "")[:400],
+            narrative=compact_log(cn.get("narrative") or ""),
             applied_cost=cost if isinstance(cost, dict) else {},
         )
         touched_ids.add(issue_id)
@@ -1247,6 +1318,8 @@ def apply_score_extraction(
     extracted: Dict[str, object],
     content=None,
     registry=None,
+    llm_config: Optional[LLMConfig] = None,
+    agno_db: Optional[SqliteDb] = None,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
 
@@ -1308,12 +1381,13 @@ def apply_score_extraction(
             print(f"[WARN] power_updates 落库失败：{exc}")
 
     # 6) issue_advances / new_issues / close_issues / cancels (复用旧 tracker 落地)
+    issue_log_compactor = make_issue_log_compactor(llm_config, agno_db)
     issue_summary = apply_issue_tracker_output(db, state, {
         "advances": extracted.get("issue_advances") or [],
         "new_issues": extracted.get("new_issues") or [],
         "close_issues": extracted.get("close_issues") or [],
         "cancels": extracted.get("cancels") or [],
-    })
+    }, log_compactor=issue_log_compactor)
 
     # 6.4) fiscal_removes：推演彻底裁撤月固定收支项（罢税/裁俸），优先级最高，先于 creates/changes。
     #      含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。删 base+rate 两行。
@@ -1558,13 +1632,15 @@ def apply_score_extraction(
                 "reason": f"建档失败（查重/字段不合）；原 status={cur_status or '不在册'}",
             })
 
-    # 11) secret_order_updates：推演写 active 密令副作用（泄漏/反弹）到 sim_note。结案不走这里。
+    # 11) secret_order_updates：推演写 active 密令进度到 sim_note。结案不走这里。
     applied_secret_orders: List[Dict[str, object]] = []
     for item in extracted.get("secret_order_updates") or []:
         if not isinstance(item, dict):
             continue
         raw_id = item.get("order_id")
-        sim_note = str(item.get("sim_note") or item.get("result") or "").strip()
+        sim_note = re.sub(r"\s+", " ", str(item.get("sim_note") or item.get("result") or "").strip())
+        if len(sim_note) > 80:
+            sim_note = sim_note[:80].rstrip() + "..."
         if raw_id is None or not sim_note:
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
                                           "reason": "order_id 或 sim_note 缺失"})
@@ -1578,7 +1654,7 @@ def apply_score_extraction(
             db.update_secret_order_sim_note(
                 real_id, sim_note, year=state.year, period=state.period
             )
-            print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
+            print(f"[secret_order] 推演进度 id={real_id} note={sim_note[:60]!r}")
             applied_secret_orders.append({"order_id": real_id, "sim_note": sim_note})
         except Exception as exc:
             applied_secret_orders.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
@@ -1639,7 +1715,8 @@ def apply_score_extraction(
         "character_status_changes": applied_status_changes,
         "character_power_changes": applied_power_changes,
         "office_changes": applied_office_changes,
-        "secret_order_updates": applied_secret_orders,
+        "secret_order_progress": applied_secret_orders,
+        "secret_order_updates": applied_secret_orders,  # 兼容旧调用方
         "secret_order_closes": applied_secret_closes,
         "victory_status": _resolve_victory(db, state, extracted),
     }
@@ -1664,6 +1741,10 @@ def apply_issue_inertia_and_ongoing(
     # inertia 是每月自然漂移基础量，对所有进行中 issue 都生效（含本月被 advance 触动的）。
     # advance 的 delta_bar 是皇帝本月实旨推动的额外量，与 inertia 叠加，互不顶替。
     _ = touched_ids  # 保留入参不破坏调用方；inertia 漂移不再按它跳过
+    # 手动 decree 局势到期自动撤销（无奖励），先于漂移处理，撤掉的不再参与本月漂移。
+    expired_manual = db.expire_due_manual_issues(state)
+    if expired_manual:
+        print(f"[issue] 手动局势到期撤销 ids={expired_manual}")
     active = db.list_active_issues()
     # 累计单月 metric 落账，用于上限 clamp
     period_metric_acc: Dict[str, int] = {}

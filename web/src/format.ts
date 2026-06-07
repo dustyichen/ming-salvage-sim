@@ -10,7 +10,13 @@ export const scoreTone = (value: number, inverse = false) => {
   return "good";
 };
 
-export const formatMoney = (value: number) => value < 0 ? `欠${Math.abs(value)}万两` : `${value}万两`;
+export const formatMoney = (value: number) => {
+  const abs = Math.abs(value);
+  const text = abs > 0 && abs < 1
+    ? `${Number((abs * 10000).toFixed(2))}两`
+    : `${Number(abs.toFixed(4))}万两`;
+  return value < 0 ? `欠${text}` : text;
+};
 
 export const formatSignedMoney = (value: number) => value < 0 ? `-${Math.abs(value)}万两` : `${value > 0 ? "+" : ""}${formatMoney(value)}`;
 

@@ -184,6 +184,32 @@ def build_memory_brief(character: Character, context: CourtContext) -> str:
     return brief
 
 
+def build_minister_recap_brief(character: Character, context: CourtContext) -> str:
+    """本大臣近月与皇帝私下奏对的纪要（月末 LLM 压缩，每大臣私有）。月内对话历史由 agno 每月一个
+    session 自管（含 tool 痕迹），跨月失忆由这条补——让大臣月初召见时记得自己上几月替皇帝办过什么
+    （已拟的旨、已铨选的人、已下的密令），不再空转重复拟同一道旨。后宫不发（无 court 奏对）。"""
+    if character.office_type == "后宫":
+        return ""
+    recaps = context.db.get_recent_minister_recaps(
+        character.name, upto_turn=context.state.turn, recent=3
+    )
+    if not recaps:
+        return ""
+    lines = ["【你近月与朕的奏对纪要（你私下议过、已替朕办成的事，勿重复办）】"]
+    for r in recaps:
+        body = (r.get("body") or "").strip()
+        if body:
+            lines.append(f"- {r['year']}年{r['period']}{TURN_UNIT}：{body}")
+    if len(lines) == 1:
+        return ""
+    brief = "\n".join(lines)
+    tlog(
+        f"[装填大臣纪要] 建「{character.name}」对话Agent时，把其近 {len(recaps)} 月私人奏对纪要"
+        f"塞进 system，让他记得自己替皇帝办过什么，共 {len(brief)} 字"
+    )
+    return brief
+
+
 def build_secret_order_brief(character: Character, context: CourtContext) -> str:
     """本大臣名下进行中密令的提醒——只列编号+标题+本月推进了没，不泄具体进展。
     详情由大臣自己调 report_secret_order_progress 查（同时可写进展）。非承办人不提示。"""
@@ -428,6 +454,7 @@ def create_minister_agent(
             army_roster = context.db.army_roster()
         last_gazette = build_last_gazette_brief(context)
         memory_brief = build_memory_brief(character, context)
+        recap_brief = build_minister_recap_brief(character, context)
         secret_brief = build_secret_order_brief(character, context)
         monthly_block_parts = [
             f"当前为 {context.state.year} 年 {context.state.period} 月（第 {context.state.turn} 回合）。"
@@ -442,6 +469,8 @@ def create_minister_agent(
             monthly_block_parts.append(last_gazette)
         if memory_brief:
             monthly_block_parts.append(memory_brief)
+        if recap_brief:
+            monthly_block_parts.append(recap_brief)
         if secret_brief:
             monthly_block_parts.append(secret_brief)
         instructions = [

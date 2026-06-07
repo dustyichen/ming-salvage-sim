@@ -19,6 +19,7 @@ from ming_sim.agents import (
     create_decree_writer_agent,
     create_ending_summary_agent,
     create_json_sanitizer_agent,
+    create_minister_recap_agent,
     create_score_extractor_module_agent,
     create_season_simulator_agent,
     run_agent_stream_text,
@@ -32,7 +33,7 @@ from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import GameState, LLMConfig
-from ming_sim.memories import build_timeline, record_chapter_memory
+from ming_sim.memories import build_timeline, record_chapter_memory, record_minister_recaps
 from ming_sim.simulation import (
     EXTRACTION_MODULES,
     build_simulator_payload,
@@ -263,17 +264,7 @@ def resolve_directives(
             + db.list_secret_orders(status="pending_review")
         )[:20]
         for o in active_orders:
-            secret_orders_for_sim.append({
-                "id": int(o["id"]),
-                "minister_name": o["minister_name"],
-                "title": o["title"],
-                "content": o["content"][:120],
-                "status": o["status"],
-                "turn_issued": o.get("turn_issued") or 0,
-                "due_turn": o.get("due_turn") or 0,
-                "progress": o.get("result") or "",      # 承办人聊天里存的当前进展
-                "sim_note": o.get("sim_note") or "",     # 上轮推演写的副作用
-            })
+            secret_orders_for_sim.append(db.secret_order_sim_payload(o))
         n_active = sum(1 for o in active_orders if o["status"] == "active")
         n_pending = sum(1 for o in active_orders if o["status"] == "pending_review")
         tlog(f"[secret_order] 注入推演 active={n_active} pending_review={n_pending}"
@@ -430,7 +421,10 @@ def _settle_after_narrative(
 
     tlog("结算 4/4 落库 + inertia/ongoing")
     _emit("stage", "落库与事项推进")
-    applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
+    applied = apply_score_extraction(
+        db, state, extracted, content=content, registry=registry,
+        llm_config=llm_config, agno_db=agno_db,
+    )
 
     # 4) 月末邸报落库（下月作前文）
     db.save_turn_report(state, narrative)
@@ -451,6 +445,15 @@ def _settle_after_narrative(
         record_chapter_memory(chapter_agent, db, state, decree_text, narrative, applied)
     except Exception as exc:
         tlog(f"[chapter-memory] 跳过：{exc}")
+
+    # 5.5) 大臣私人对话纪要：把本回合被召见过的大臣各自的奏对压成一段私人纪要，落 event_memories
+    #      （minister_recap）。月内历史交 agno session 自管（含 tool 痕迹），跨月靠这条补失忆，
+    #      月初注入该大臣 system。失败/为空不抛断（铁律）。
+    try:
+        recap_agent = create_minister_recap_agent(llm_config, agno_db)
+        record_minister_recaps(recap_agent, db, state)
+    except Exception as exc:
+        tlog(f"[minister-recap] 跳过：{exc}")
 
     # 6) 落 inertia + ongoing (未被本月 issue_advances 触动的)
     touched_ids = set()

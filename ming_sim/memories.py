@@ -234,3 +234,64 @@ def record_chapter_memory(
     memory_id = db.save_chapter_memory(state, title=title, body=body, tags=tags)
     tlog(f"[chapter-memory] saved id={memory_id} turn={state.turn}")
     return memory_id
+
+
+def _parse_recap_output(raw: str) -> str:
+    """解析 recap agent 的 {recap} JSON，取 recap 文本。失败兜底：取大括号内或原文。"""
+    text = strip_json_fence(raw).strip()
+    data: object = None
+    try:
+        data = json.loads(text)
+    except Exception:
+        start, end = text.find("{"), text.rfind("}")
+        if 0 <= start < end:
+            try:
+                data = json.loads(text[start : end + 1])
+            except Exception:
+                data = None
+    if isinstance(data, dict):
+        return str(data.get("recap") or "").strip()
+    return text
+
+
+def record_minister_recaps(agent: Agent, db: GameDB, state: GameState) -> int:
+    """月末把本回合被召见过的大臣各自与皇帝的奏对，逐个浓缩成一段私人纪要，落 event_memories
+    （minister_recap）。供其下回合召见时回忆已替皇帝办了什么，避免空转重复拟旨。
+
+    懒生成：只对本回合真聊过的大臣跑（通常两三人）。临时召见人物不落 chat_messages，自然跳过。
+    单个大臣失败/纪要为空不抛断、不落库，继续下一个（铁律：不抛断游戏）。返回落库条数。"""
+    names = db.ministers_chatted_in_turn(state.turn)
+    if not names:
+        return 0
+    saved = 0
+    for name in names:
+        try:
+            rounds = db.load_turn_chat_messages(name, state.turn)
+            if not rounds:
+                continue
+            dialogue = "\n".join(
+                f"{'皇帝' if r['role'] == 'user' else name}：{r['content']}" for r in rounds
+            )
+            payload = {
+                "minister": name,
+                "title": f"崇祯{state.year}年{state.period}{TURN_UNIT}",
+                "dialogue": dialogue,
+                "instruction": (
+                    f"把{name}本月与皇帝的奏对浓缩成一段第三人称私人纪要（120 字内），"
+                    "尤其写明他本月已替皇帝办成的动作（拟旨入档/铨选/密令/调税）与议定方针，"
+                    "供他下月回忆勿重复。只输出 {\"recap\":...} JSON。"
+                ),
+            }
+            payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
+            raw = run_agent_text(agent, payload_json, tag="minister-recap").strip()
+            recap = _parse_recap_output(raw)
+            if not recap:
+                tlog(f"[minister-recap] {name} 纪要为空，跳过")
+                continue
+            mid = db.save_minister_recap(state, name, recap)
+            if mid:
+                saved += 1
+                tlog(f"[minister-recap] saved id={mid} {name} turn={state.turn} ({len(recap)}字)")
+        except Exception as exc:
+            tlog(f"[minister-recap] {name} 失败跳过：{exc}")
+    return saved

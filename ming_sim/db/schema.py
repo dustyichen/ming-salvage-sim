@@ -611,6 +611,10 @@ class _SchemaMixin:
         self.ensure_column("characters", "location", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
+        # 玩家手动管理的 decree 局势：is_manual=1 标记由皇帝直接立项（非 LLM/事件池）；
+        # duration_turns>0 时到期（origin_turn+duration_turns）自动撤销，无成功/失败奖励。
+        self.ensure_column("issues", "is_manual", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("issues", "duration_turns", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")
@@ -628,7 +632,7 @@ class _SchemaMixin:
         # 结局：ended=1 时游戏终结；ending_status 为 context.ENDING_* 类型。
         self.ensure_column("game_state", "ended", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("game_state", "ending_status", "TEXT NOT NULL DEFAULT ''")
-        # 密令推演副作用列（result 留给承办人进展，sim_note 给推演写泄漏/反弹，互不覆盖）
+        # 密令推演进度列（result 留给承办人回报，sim_note 给推演写短进度/风险，互不覆盖）
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")

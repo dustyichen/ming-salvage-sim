@@ -298,7 +298,7 @@ def _apply_economy_list(
         if account not in ("国库", "内库"):
             continue
         try:
-            delta = int(move.get("delta") or 0)
+            delta = float(move.get("delta") or 0)
         except (TypeError, ValueError):
             continue
         category = str(move.get("category") or move.get("reason") or "事项")[:40]
@@ -314,7 +314,7 @@ def _apply_economy_list(
         # purpose=补饷 但缺 target_kind/target_id → 按 ARMY_SALARY_PRIORITY 优先级
         # 自动散到各军（每军按 arrears 上限扣，扣完 budget 为止）。
         if purpose == "补饷" and delta < 0 and (target_kind != "army" or not raw_target_id):
-            budget = abs(delta)
+            budget = int(abs(delta))
             spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason)
             applied.append({"account": account, "delta": -spent, "reason": reason})
             continue
@@ -324,7 +324,7 @@ def _apply_economy_list(
             ).fetchone()
             if row is None:
                 # army_id 拼错 → 退化为按优先级散
-                budget = abs(delta)
+                budget = int(abs(delta))
                 spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason)
                 applied.append({"account": account, "delta": -spent, "reason": reason})
                 continue
@@ -336,7 +336,7 @@ def _apply_economy_list(
                     "reason": f"{row['name']}已无欠饷，{abs(delta)}万两未拨"
                 })
                 continue
-            actual_pay = min(abs(delta), current_arrears)
+            actual_pay = min(int(abs(delta)), current_arrears)
             actual = db.record_issue_economy_move(
                 state, account, -actual_pay, category, reason,
                 purpose="补饷", target_kind="army", target_id=str(row["id"]),
@@ -398,8 +398,11 @@ def apply_annual_grain_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         old_stock = int(fiscal.get("grain_stock") or 0)
         grain_output = int(fiscal.get("grain_output") or 0)
         annual_consumption = round(population * per_capita)
-        new_stock = max(0, old_stock + grain_output - annual_consumption)
+        raw_stock = old_stock + grain_output - annual_consumption
+        new_stock = max(0, raw_stock)
         actual_delta = new_stock - old_stock
+        # 缺口（万石）：年产+存粮不抵口粮的部分，>0 即闹饥荒，喂给人口结算扣减员。
+        grain_shortfall = max(0, -raw_stock)
 
         fiscal["grain_stock"] = new_stock
         db.conn.execute(
@@ -422,8 +425,106 @@ def apply_annual_grain_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             )
 
         flows.append({
-            "dir": "grain", "region": name, "output": grain_output,
+            "dir": "grain", "region": region_id, "name": name, "output": grain_output,
             "consumption": annual_consumption, "delta": actual_delta, "stock": new_stock,
+            "shortfall": grain_shortfall,
+        })
+
+    db.conn.commit()
+    return flows
+
+
+def apply_annual_population_flows(
+    db: GameDB, state: GameState, grain_flows: List[Dict[str, object]]
+) -> List[Dict[str, object]]:
+    """12月年度人口结算：各省人口按基础增长率 + 民心/灾荒修正逐年涨跌。
+
+    紧随 apply_annual_grain_flows 之后跑，复用其算出的本年缺粮（闹饥荒→负增长）。
+    增长率全走 fiscal_config（人口增长率系统，单位‰/年），改默认值改 JSON 升 schema_version。
+    """
+    if int(state.period) != 12:
+        return []
+
+    cfg = db.get_fiscal_config()
+
+    def _rate(key: str, default: int) -> float:
+        try:
+            return int(cfg.get(key, default)) / 1000.0  # 设定按千分率(‰)存，落地除以1000
+        except (TypeError, ValueError):
+            return default / 1000.0
+
+    base_rate = _rate("人口基础增长率_base", 8)        # +0.8%/年 平年自然增长
+    support_bonus = _rate("人口民心增益_base", 4)      # 民心>60 时 +0.4%
+    support_penalty = _rate("人口民心减损_base", 4)    # 民心<40 时 -0.4%
+    unrest_penalty = _rate("人口动乱减损_base", 6)     # 动乱>50 时 -0.6%
+    disaster_penalty = _rate("人口灾荒减损_base", 10)  # 有天灾/人祸 -1.0%
+    famine_penalty = _rate("人口饥荒减损_base", 10)    # 本年缺粮 额外 -1.0%
+
+    shortfall_by_region = {
+        str(f.get("region")): int(f.get("shortfall") or 0)
+        for f in grain_flows
+        if f.get("dir") == "grain"
+    }
+
+    rows = db.conn.execute(
+        "SELECT id, name, population, public_support, unrest, "
+        "natural_disaster, human_disaster FROM regions"
+    ).fetchall()
+    flows: List[Dict[str, object]] = []
+    for row in rows:
+        region_id = str(row["id"])
+        name = str(row["name"])
+        population = int(row["population"] or 0)
+        if population <= 0:
+            continue
+
+        support = int(row["public_support"] or 0)
+        unrest = int(row["unrest"] or 0)
+        natural = str(row["natural_disaster"] or "").strip()
+        human = str(row["human_disaster"] or "").strip()
+        shortfall = shortfall_by_region.get(region_id, 0)
+
+        rate = base_rate
+        if support > 60:
+            rate += support_bonus
+        elif support < 40:
+            rate -= support_penalty
+        if unrest > 50:
+            rate -= unrest_penalty
+        if natural or human:
+            rate -= disaster_penalty
+        if shortfall > 0:
+            rate -= famine_penalty
+
+        new_population = max(0, round(population * (1 + rate)))
+        actual_delta = new_population - population
+        if actual_delta == 0:
+            continue
+
+        db.conn.execute(
+            "UPDATE regions SET population = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (new_population, region_id),
+        )
+        reason = (
+            f"年度人口结算：增长率{rate * 100:+.1f}%"
+            f"（民心{support}/动乱{unrest}"
+            f"{'/有灾' if (natural or human) else ''}"
+            f"{'/缺粮' if shortfall > 0 else ''}）"
+        )
+        db.conn.execute(
+            """
+            INSERT INTO region_logs
+            (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '户部')
+            """,
+            (
+                state.turn, state.year, state.period, region_id,
+                "population", str(population), str(new_population), actual_delta, reason,
+            ),
+        )
+        flows.append({
+            "dir": "population", "region": name, "rate": round(rate * 100, 1),
+            "old": population, "new": new_population, "delta": actual_delta,
         })
 
     db.conn.commit()
@@ -574,7 +675,9 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # 帝国修正（旧称遗产）不在此自我落账：它作为百分比修正符，由 record_issue_economy_move /
     # apply_region_deltas / apply_army_deltas 在每笔增量落账时按维度净 pct 放大/缩小。
     # 因此上面的固定收支（田赋/军饷/建筑产出）已自动被修正，无需独立 tick，否则会重复计。
-    flows.extend(apply_annual_grain_flows(db, state))
+    grain_flows = apply_annual_grain_flows(db, state)
+    flows.extend(grain_flows)
+    flows.extend(apply_annual_population_flows(db, state, grain_flows))
     return flows
 
 

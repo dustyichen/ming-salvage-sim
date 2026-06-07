@@ -89,7 +89,7 @@ class _AdminMixin:
         if table == "metrics" and data.get("key") in ("国库", "内库") and "value" in data:
             self.conn.execute(
                 "UPDATE economy_accounts SET balance = ? WHERE account = ?",
-                (int(data["value"]), data["key"]),
+                (float(data["value"]), data["key"]),
             )
         self.conn.commit()
         row = self.conn.execute(f"SELECT * FROM {table} WHERE {pk}=?", (data[pk],)).fetchone()

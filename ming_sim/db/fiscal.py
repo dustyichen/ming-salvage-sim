@@ -159,6 +159,8 @@ class _FiscalMixin:
         _FISCAL_MIGRATIONS: "Dict[int, Any]" = {
             6: _migrate_fiscal_v6_monthly,
             7: _migrate_fiscal_v7_defaults,
+            # v11：新增人口增长率系统的 6 个 _base 科目，默认迁移只补缺 key 即可。
+            11: _seed_missing,
             # 8: lambda: self._add_fiscal_key("关税_base", ...),   # 例：将来加新税
         }
 
@@ -397,8 +399,8 @@ class _FiscalMixin:
                     state.year,
                     state.period,
                     str(move["account"]),
-                    int(move["delta"]),
-                    int(move["balance_after"]),
+                    float(move["delta"]),
+                    float(move["balance_after"]),
                     str(move["category"]),
                     str(move["reason"]),
                     event.id,
@@ -443,7 +445,7 @@ class _FiscalMixin:
         if not account_rows:
             account_text = f"国库{format_money(state.metrics['国库'])}，内库{format_money(state.metrics['内库'])}"
         else:
-            account_text = "，".join(f"{row['account']}{format_money(int(row['balance']))}" for row in account_rows)
+            account_text = "，".join(f"{row['account']}{format_money(row['balance'])}" for row in account_rows)
 
         period_rows = self.conn.execute(
             """
@@ -458,7 +460,7 @@ class _FiscalMixin:
             (state.turn,),
         ).fetchall()
         period_text = "；".join(
-            f"{row['account']}入{format_money(int(row['income'] or 0))}出{format_money(int(row['expense'] or 0))}"
+            f"{row['account']}入{format_money(row['income'] or 0)}出{format_money(row['expense'] or 0)}"
             for row in period_rows
         )
         if not period_text:
@@ -475,7 +477,7 @@ class _FiscalMixin:
         ).fetchall()
         recent = []
         for row in reversed(ledger_rows):
-            delta = int(row["delta"])
+            delta = float(row["delta"])
             sign = "+" if delta > 0 else ""
             recent.append(
                 f"{period_label(int(row['year']), int(row['period']))} {row['account']}{sign}{format_money(delta)} {row['category']}：{row['reason']}"
@@ -500,10 +502,10 @@ class _FiscalMixin:
             return f"{account}无流水记录。"
         lines = [f"【{account}近{turns}回合流水（最新在前）】"]
         for r in rows:
-            sign = "+" if int(r["delta"]) > 0 else ""
+            sign = "+" if float(r["delta"]) > 0 else ""
             lines.append(
                 f"{r['year']}年{r['period']}月（turn{r['turn']}）"
-                f" {sign}{format_money_delta(int(r['delta']))} → 余{format_money(int(r['balance_after']))} "
+                f" {sign}{format_money_delta(r['delta'])} → 余{format_money(r['balance_after'])} "
                 f"[{r['category']}] {r['reason']}"
                 + (f"（{r['actor']}）" if r["actor"] else "")
             )

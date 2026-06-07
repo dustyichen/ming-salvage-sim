@@ -42,6 +42,25 @@ class _ChatMixin:
         ).fetchone()
         return int(row["n"]) if row else 0
 
+    def ministers_chatted_in_turn(self, turn: int) -> List[str]:
+        """本回合被召见聊过的大臣名单（按首次出现序）。供月末懒生成私人对话纪要——
+        一个月通常只召见两三人，只给他们跑 recap，不全员浪费。"""
+        rows = self.conn.execute(
+            "SELECT minister_name FROM chat_messages "
+            "WHERE turn = ? GROUP BY minister_name ORDER BY MIN(id)",
+            (int(turn),),
+        ).fetchall()
+        return [r["minister_name"] for r in rows]
+
+    def load_turn_chat_messages(self, minister_name: str, turn: int) -> List[Dict[str, str]]:
+        """取某大臣本回合与皇帝的全部奏对（时间正序，纯文本 user/minister）。供月末喂 recap agent。"""
+        rows = self.conn.execute(
+            "SELECT role, content FROM chat_messages "
+            "WHERE minister_name = ? AND turn = ? ORDER BY id",
+            (minister_name, int(turn)),
+        ).fetchall()
+        return [{"role": r["role"], "content": r["content"]} for r in rows]
+
     def load_recent_chat_rounds(
         self, minister_name: str, max_rounds: int
     ) -> List[Dict[str, str]]:

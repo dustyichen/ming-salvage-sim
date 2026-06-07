@@ -83,7 +83,7 @@ class _StateMixin:
             self.seed_opening_gazette(state)
             return state
         metrics = {
-            metric["key"]: int(metric["value"])
+            metric["key"]: float(metric["value"])
             for metric in self.conn.execute("SELECT key, value FROM metrics").fetchall()
         }
         state = GameState(
@@ -99,7 +99,7 @@ class _StateMixin:
         account_rows = self.conn.execute("SELECT account, balance FROM economy_accounts").fetchall()
         for account in account_rows:
             account_name = str(account["account"])
-            balance = int(account["balance"])
+            balance = float(account["balance"])
             state.metrics[account_name] = balance
         self.sync_economy_accounts(state)
         self.ensure_opening_ledger(state)

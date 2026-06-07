@@ -12,7 +12,7 @@ from ming_sim.models import Event, GameState, period_label
 
 
 def metric_bar(value: int) -> str:
-    filled = value // 10
+    filled = int(value) // 10
     return "█" * filled + "░" * (10 - filled)
 
 
@@ -23,7 +23,7 @@ def print_header(state: GameState, db: Optional[GameDB] = None) -> None:
     for key in ECONOMY_ACCOUNTS:
         print(f"{key:>4}: {format_money(state.metrics[key])}")
     for key in SCORE_METRICS:
-        value = state.metrics[key]
+        value = int(state.metrics[key])
         print(f"{key:>4}: {value:>3}/100 {metric_bar(value)}")
     if db is not None:
         print()
@@ -114,7 +114,7 @@ def build_period_report(
     ]
     if economy_moves:
         money = "；".join(
-            f"{move['account']}{format_money_delta(int(move['delta']))}（{move['category']}）"
+            f"{move['account']}{format_money_delta(move['delta'])}（{move['category']}）"
             for move in economy_moves
         )
         lines.append(f"钱粮流水：{money}。")

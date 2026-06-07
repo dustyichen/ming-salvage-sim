@@ -1001,7 +1001,7 @@ export function CourtDrawer({
                     <CourtChatAvatar message={m} />
                     <div className="court-chat-message-stack">
                       <div className="court-chat-panel-speaker">
-                        {m.role === "emperor" ? "皇帝" : m.role === "conclusion" ? "朝议结论" : m.speaker}
+                        {m.role === "emperor" ? "朕" : m.role === "conclusion" ? "朝议结论" : m.speaker}
                       </div>
                       <div className="court-chat-panel-bubble">
                         <p>{m.displayContent ?? m.content}</p>

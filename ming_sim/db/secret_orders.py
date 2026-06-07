@@ -32,6 +32,36 @@ from ming_sim.db._helpers import (
 class _SecretOrdersMixin:
     # ----- secret_orders（密令系统）-----
 
+    @staticmethod
+    def _compact_secret_order_lines(text: object, max_chars: int = 80) -> List[Dict[str, object]]:
+        """把 result/sim_note 的按月长文本压成给推演看的短时间线。"""
+        out: List[Dict[str, object]] = []
+        for idx, raw in enumerate(str(text or "").split("\n"), start=1):
+            line = raw.strip()
+            if not line:
+                continue
+            m = re.match(r"^(〔[^〕]+〕)(.*)$", line)
+            time_text = m.group(1) if m else ""
+            narrative = (m.group(2) if m else line).strip()
+            if len(narrative) > max_chars:
+                narrative = narrative[:max_chars].rstrip() + "..."
+            out.append({"id": idx, "time": time_text, "narrative": narrative})
+        return out
+
+    def secret_order_sim_payload(self, order: Dict[str, object]) -> Dict[str, object]:
+        """构造注入 simulator 的密令轻量 payload；不影响数据库原文与前端展示。"""
+        return {
+            "id": int(order["id"]),
+            "minister_name": order["minister_name"],
+            "title": order["title"],
+            "content": str(order.get("content") or "")[:120],
+            "status": order["status"],
+            "turn_issued": order.get("turn_issued") or 0,
+            "due_turn": order.get("due_turn") or 0,
+            "progress": self._compact_secret_order_lines(order.get("result") or ""),
+            "sim_note": self._compact_secret_order_lines(order.get("sim_note") or ""),
+        }
+
     def create_secret_order(
         self,
         state: GameState,
@@ -45,8 +75,18 @@ class _SecretOrdersMixin:
         active_count = self.conn.execute(
             "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
         ).fetchone()[0]
-        if active_count >= 20:
-            raise ValueError(f"进行中密令已达上限（20条），请先结案部分密令再下新令。当前：{active_count} 条。")
+        if active_count >= 5:
+            raise ValueError(f"进行中密令已达上限（5条），请先结案或撤销部分密令再下新令。当前：{active_count} 条。")
+        # 一个承办人同一时间只能执行一条进行中密令
+        assignee_active = self.conn.execute(
+            "SELECT id, title FROM secret_orders WHERE status='active' AND minister_name = ?",
+            (minister_name,),
+        ).fetchone()
+        if assignee_active is not None:
+            raise ValueError(
+                f"{minister_name}名下已有进行中密令〔#{int(assignee_active['id'])} {assignee_active['title']}〕，"
+                f"同一承办人同一时间只能执行一条密令，请先结案/撤销该令再下新令。"
+            )
         tags_json = json.dumps(tags, ensure_ascii=False)
         deadline = max(0, min(int(deadline_months or 0), 36))
         due_turn = int(state.turn) + deadline if deadline else 0
@@ -116,6 +156,18 @@ class _SecretOrdersMixin:
         )
         self.conn.commit()
         tlog(f"[secret_order] close id={order_id} status={status}")
+
+    def delete_secret_order(self, order_id: int) -> bool:
+        """彻底删除一条密令记录（用于清掉重复/误下的密令）。删成功返回 True，不存在返回 False。"""
+        row = self.conn.execute(
+            "SELECT id FROM secret_orders WHERE id = ?", (int(order_id),)
+        ).fetchone()
+        if row is None:
+            return False
+        self.conn.execute("DELETE FROM secret_orders WHERE id = ?", (int(order_id),))
+        self.conn.commit()
+        tlog(f"[secret_order] delete id={order_id}")
+        return True
 
     def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
         """大臣提交密令待推演核议：active → pending_review。
@@ -202,7 +254,7 @@ class _SecretOrdersMixin:
     def update_secret_order_sim_note(
         self, order_id: int, sim_note: str, year: int = 0, period: int = 0
     ) -> None:
-        """推演写密令副作用（泄漏/反弹等），按年月追加进 sim_note 历史时间线，
+        """推演写密令进度（含风险/风声），按年月追加进 sim_note 历史时间线，
         不动 result/status。同月再写替换（推演每月一次）。与承办人进展分列。"""
         self._append_secret_order_line(order_id, "sim_note", sim_note, year, period)
         tlog(f"[secret_order] sim_note id={order_id} note={sim_note[:40]!r}")

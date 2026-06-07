@@ -47,8 +47,7 @@ from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import character_context_with_db, match_minister_from_text
-from ming_sim.registry import NUM_HISTORY_RUNS
-from agno.models.message import Message
+from ming_sim.constants import TURN_UNIT
 from ming_sim.flows import calc_province_fiscal, compute_budget_lines
 from ming_sim.simulation import build_simulator_payload
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
@@ -818,6 +817,9 @@ class WebGame:
                 "ongoing_text": _format_issue_ongoing(str(row["ongoing_effects"] or "{}")),
                 "effect_on_resolve": dict(json.loads(str(row["effect_on_resolve"] or "{}"))),
                 "effect_on_fail": dict(json.loads(str(row["effect_on_fail"] or "{}"))),
+                "is_manual": bool(row["is_manual"]) if "is_manual" in row.keys() else False,
+                "duration_turns": int(row["duration_turns"] or 0) if "duration_turns" in row.keys() else 0,
+                "origin_turn": int(row["origin_turn"] or 0),
             })
         return payloads
 
@@ -983,6 +985,7 @@ class WebGame:
             "previous_summary": self.previous_summary,
             "treasury": self.db.treasury_report(self.state),
             "issues": self.issue_payloads(),
+            "max_decree_issues": int(load_runtime_game().get("max_decree_issues", 10)),
             "legacies": self.legacies_payload(),
             "closed_this_turn": self.closed_this_turn_payloads(),
             "budget": self.budget_payload(),
@@ -1021,33 +1024,6 @@ class WebGame:
     def _persistent_chat_minister(self, minister_name: str) -> bool:
         return minister_name not in self.session.temporary_characters
 
-    def _minister_agno_session_id(self, minister_name: str) -> str:
-        registry = self.session.registry
-        if registry is None:
-            return f"minister-{minister_name}-turn-{self.state.turn}"
-        return registry.session_ids.get(minister_name, f"minister-{minister_name}-turn-{self.state.turn}")
-
-    def _history_messages(self, minister_name: str) -> List[Message]:
-        """喂 LLM 的对话历史：自己管，从 chat_messages 读最近 NUM_HISTORY_RUNS 轮（跨月连续，
-        含本月已聊轮），按时序正序拼成真 user/assistant 消息列表，作本轮 input 前缀。
-
-        为什么不靠 agno session 自动 history：agno session 的 runs 是整块 JSON blob，读必
-        全量进内存，无法「只拉尾 N runs」。chat_messages 表才能真 LIMIT 分段（不全量进内存）。
-        且自己拼能保证时序——往月在前、本月在后，不受 agno 装配顺序（history 永远排在
-        input 之前）所限。故调用方须对本轮关掉 add_history_to_context，全由这里供历史。
-
-        每条标 from_history=True：agent store_history_messages=False，agno 存 run 前会 scrub
-        掉 from_history 消息 → 注入的历史不二次落 agno session。chat_messages 本就是历史唯一
-        真相（每轮答完即落库），不靠 agno 存。临时召见人物不落 chat_messages，无历史可读。"""
-        if not self._persistent_chat_minister(minister_name):
-            return []
-        rows = self.db.load_recent_chat_rounds(minister_name, NUM_HISTORY_RUNS)
-        msgs: List[Message] = []
-        for r in rows:
-            role = "user" if r["role"] == "user" else "assistant"
-            msgs.append(Message(role=role, content=r["content"], from_history=True))
-        return msgs
-
     def _chat_payload(
         self,
         minister_name: str,
@@ -1064,7 +1040,9 @@ class WebGame:
         tax_adjusted: str = "",
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
-        # 召对答完，整轮一起落库（user+minister）+ 进内存缓存。中途退出走不到这里 → 不落库。
+        # 召对答完整轮一起落库（user+minister）+ 进内存缓存。中途退出走不到这里 → 不落库。
+        # chat_messages 现在只供前端展示 / 页面刷新恢复 / 撤回比对，不再喂 LLM——喂 LLM 的历史
+        # 全走 agno 每月一个 session 自管（含 tool 痕迹）。
         if user_text:
             self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": user_text})
         self.chat_history.setdefault(minister_name, []).append({"role": "minister", "content": answer})
@@ -1097,9 +1075,8 @@ class WebGame:
         if not text:
             raise HTTPException(status_code=400, detail="问话不能为空。")
         # 召对答完才落库（user+minister 一起，见 _chat_payload）；中途退出/异常整轮不落库。
-        # 历史自己管：从 chat_messages 读尾 N 轮真历史消息前置喂 LLM，本轮关 agno 自动 history。
-        history = self._history_messages(minister_name)
-        result = self.session.chat(minister_name, text, history_messages=history)
+        # 喂 LLM 的历史走 agno 每月一个 session 自管（含 tool 痕迹）；chat_messages 仅供前端展示。
+        result = self.session.chat(minister_name, text)
         proposed = None
         if result.proposed_directive is not None:
             d = result.proposed_directive
@@ -1128,14 +1105,16 @@ class WebGame:
         chunks: List[str] = []
         try:
             agent = self.session.registry.get(character)
-            # 历史自己管：从 chat_messages 读尾 N 轮真历史消息前置，本月新问作末尾 user message。
-            # 本轮关 agno 自动 history（add_history_to_context=False），全由这里供历史，保证时序。
-            history = self._history_messages(minister_name)
-            run_input: Any = history + [Message(role="user", content=text)] if history else text
+            # 喂 LLM 的历史走 agno 每月一个 session 自管（含 tool 痕迹），不再前置自管历史。
+            # 本回合已核定草案是跨 agent 信息（agno 单 session 给不了），每轮前置进 user message
+            # 头，与 GameSession.chat 保持一致，确保大臣看得到兄弟大臣最新动作。
+            run_input: Any = text
+            draft_line = self.session.registry.build_draft_line()
+            if draft_line and draft_line != "无":
+                run_input = f"【本{TURN_UNIT}已核定草案】{draft_line}\n\n{text}"
             run_output = None
             stream = agent.run(
                 run_input, stream=True, stream_events=True, yield_run_output=True,
-                add_history_to_context=False,
             )
             for event in stream:
                 content = getattr(event, "content", None)
@@ -1326,17 +1305,7 @@ class WebGame:
             previous_narrative=self.previous_summary or "",
             relevant_memories=self.db.list_chapter_memories(upto_turn=self.state.turn, recent=6),
             secret_orders=[
-                {
-                    "id": int(o["id"]),
-                    "minister_name": o["minister_name"],
-                    "title": o["title"],
-                    "content": str(o["content"] or "")[:120],
-                    "status": o["status"],
-                    "turn_issued": o.get("turn_issued") or 0,
-                    "due_turn": o.get("due_turn") or 0,
-                    "progress": o.get("result") or "",
-                    "sim_note": o.get("sim_note") or "",
-                }
+                self.db.secret_order_sim_payload(o)
                 for o in (
                     self.db.list_secret_orders(status="active")
                     + self.db.list_secret_orders(status="pending_review")
@@ -2223,6 +2192,8 @@ class GameSettingsRequest(BaseModel):
     hitl_min_decisions: int = 1
     # 朝会聊天室 ReAct 交锋轮数，未形成结论前继续驱动 agent；默认 3。
     court_chat_debate_rounds: int = 3
+    # 玩家手动 decree 局势同时进行上限；默认 10，调高增加推演 token 消耗。
+    max_decree_issues: int = 10
 
 
 @app.get("/api/menu/game_settings")
@@ -2234,7 +2205,9 @@ async def api_menu_game_settings() -> Dict[str, Any]:
 @app.post("/api/menu/game_settings")
 async def api_menu_save_game_settings(request: GameSettingsRequest) -> Dict[str, Any]:
     """保存全局玩法设置（runtime_game.json）。立即对下一回合推演生效。"""
-    saved = save_runtime_game(request.hitl_min_decisions, request.court_chat_debate_rounds)
+    saved = save_runtime_game(
+        request.hitl_min_decisions, request.court_chat_debate_rounds, request.max_decree_issues
+    )
     return {"ok": True, "game_settings": saved}
 
 
@@ -2258,6 +2231,80 @@ async def api_secret_orders(status: str = "") -> Dict[str, Any]:
     """列出密令。status 为空返回全部，否则按 active/done/failed 过滤。"""
     orders = get_game().db.list_secret_orders(status=status or None)
     return {"orders": orders}
+
+
+@app.delete("/api/secret_orders/{order_id}")
+async def api_delete_secret_order(order_id: int) -> Dict[str, Any]:
+    """删除一条密令记录（清掉重复/误下的密令）。"""
+    ok = get_game().db.delete_secret_order(order_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"未找到密令 #{order_id}")
+    print(f"[secret_order/api] 删除密令 id={order_id}")
+    return {"deleted": True, "order_id": order_id}
+
+
+class ManualIssueCreateRequest(BaseModel):
+    # 目标（局势标题），必填。
+    title: str = ""
+    # 持续回合数；0=无硬期限，>0 到期自动撤销（无奖励）。
+    duration_turns: int = 0
+
+
+class ManualIssueUpdateRequest(BaseModel):
+    title: str | None = None
+    duration_turns: int | None = None
+
+
+@app.post("/api/issues/manual")
+async def api_create_manual_issue(request: ManualIssueCreateRequest) -> Dict[str, Any]:
+    """皇帝手动新建一条 decree 局势（无成功/失败奖励，可设持续回合数）。"""
+    game = get_game()
+    title = request.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="目标（标题）不能为空")
+    max_n = int(load_runtime_game().get("max_decree_issues", 10))
+    cur = game.db.count_active_manual_issues()
+    if cur >= max_n:
+        raise HTTPException(
+            status_code=409,
+            detail=f"手动局势已达上限（{max_n} 条），请先撤销部分局势，或在主菜单游戏设置调高上限。当前：{cur} 条。",
+        )
+    issue_id = game.db.insert_issue(
+        game.session.state,
+        kind="situation",
+        title=title[:60],
+        origin_kind="decree",
+        origin_ref="manual",
+        bar_value=40,
+        stage_text=title[:60],
+        cancellable="decree",
+        is_manual=True,
+        duration_turns=max(0, int(request.duration_turns or 0)),
+    )
+    print(f"[issue/api] 手动新建局势 id={issue_id} title={title!r} duration={request.duration_turns}")
+    return {"id": issue_id, "title": title, "duration_turns": max(0, int(request.duration_turns or 0))}
+
+
+@app.patch("/api/issues/manual/{issue_id}")
+async def api_update_manual_issue(issue_id: int, request: ManualIssueUpdateRequest) -> Dict[str, Any]:
+    """改手动 decree 局势：目标 / 持续回合数。"""
+    ok = get_game().db.update_manual_issue(
+        issue_id, title=request.title, duration_turns=request.duration_turns
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"未找到可改的手动局势 #{issue_id}（仅手动新建且进行中的可改）")
+    print(f"[issue/api] 改手动局势 id={issue_id} title={request.title!r} duration={request.duration_turns}")
+    return {"updated": True, "id": issue_id}
+
+
+@app.delete("/api/issues/manual/{issue_id}")
+async def api_delete_manual_issue(issue_id: int) -> Dict[str, Any]:
+    """删除手动 decree 局势（仅手动新建的可删）。"""
+    ok = get_game().db.delete_manual_issue(issue_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"未找到可删的手动局势 #{issue_id}（仅手动新建的可删）")
+    print(f"[issue/api] 删除手动局势 id={issue_id}")
+    return {"deleted": True, "id": issue_id}
 
 
 @app.get("/api/turn_extraction")

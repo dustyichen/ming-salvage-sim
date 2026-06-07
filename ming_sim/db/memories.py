@@ -495,3 +495,61 @@ class _MemoriesMixin:
             }
             for r in rows
         ]
+
+    # ── 大臣私人对话纪要（event_memories 的 minister_recap 类，每大臣每回合一条，永久）──
+    # 月内对话历史交 agno 每月一个 session 自管（含 tool 痕迹）；跨月靠这条 LLM 压缩纪要补失忆，
+    # 月初注入该大臣 system（registry.build_minister_recap_brief）。subject_id=大臣名 → 私有于本人。
+
+    def save_minister_recap(self, state: GameState, minister_name: str, recap: str) -> int:
+        """落某大臣本回合私人对话纪要。subject_type=character、subject_id=大臣名、
+        event_type=minister_recap、source_id=turn 保证每大臣每回合唯一。纪要正文存 body。"""
+        name = (minister_name or "").strip()
+        text = (recap or "").strip()
+        if not name or not text:
+            return 0
+        title = f"崇祯{state.year}年{state.period}{TURN_UNIT}·{name}奏对"
+        memory_id = self.upsert_event_memory(
+            state,
+            subject_type="character",
+            subject_id=name,
+            event_type="minister_recap",
+            title=title,
+            outcome=title[:80],
+            sentiment="neutral",
+            importance=5,
+            tags=["奏对纪要", f"turn{state.turn}", name],
+            source_kind="chat",
+            source_id=str(state.turn),
+            expires_turn=None,
+        )
+        if memory_id:
+            self.conn.execute(
+                "UPDATE event_memories SET body = ? WHERE id = ?",
+                (text, memory_id),
+            )
+            self.conn.commit()
+        return memory_id
+
+    def get_recent_minister_recaps(
+        self, minister_name: str, upto_turn: int, recent: int = 3
+    ) -> List[Dict[str, object]]:
+        """取某大臣 turn < upto_turn 的最近 recent 条私人对话纪要，按 turn 升序（喂其 system 用）。
+        只取更早回合（< upto_turn）：本回合纪要要月末结算才生成，召见时尚不存在。"""
+        name = (minister_name or "").strip()
+        if not name:
+            return []
+        rows = self.conn.execute(
+            "SELECT turn, year, period, body FROM event_memories "
+            "WHERE event_type = 'minister_recap' AND subject_id = ? AND turn < ? "
+            "ORDER BY turn DESC LIMIT ?",
+            (name, int(upto_turn), max(1, int(recent))),
+        ).fetchall()
+        return [
+            {
+                "turn": int(r["turn"]),
+                "year": int(r["year"]),
+                "period": int(r["period"]),
+                "body": r["body"] or "",
+            }
+            for r in reversed(rows)
+        ]

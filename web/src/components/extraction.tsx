@@ -101,8 +101,8 @@ export function ExtractionView({ data, loading, error }: { data: ExtractionData 
       <ExtractionSection title="外交关系">
         <DiplomacyBlock data={pickField(out, "外交关系", "world_advance") ?? pickField(out, "外交", "world_advance") ?? pickField(out, "外交态度", "world_advance") ?? pickField(out, "四方动向", "world_advance")} />
       </ExtractionSection>
-      <ExtractionSection title="密令副作用">
-        <SecretSideBlock data={pickField(out, "密令副作用", "secret_order_updates")} />
+      <ExtractionSection title="密令进度">
+        <SecretSideBlock data={pickField(out, "密令进度", "secret_order_progress") ?? pickField(out, "密令副作用", "secret_order_updates")} />
       </ExtractionSection>
       <ExtractionSection title="密令核议">
         <SecretCloseBlock data={pickField(out, "密令结案", "secret_order_closes")} />
@@ -412,7 +412,7 @@ export function PowerChangesBlock({ data }: { data: any }) {
 }
 
 
-// 密令副作用：active 密令的推演副作用。
+// 密令进度：active 密令的月度短进度。
 export function SecretSideBlock({ data }: { data: any }) {
   if (isEmptyData(data) || !Array.isArray(data)) return <p className="extraction-empty">无</p>;
   return (

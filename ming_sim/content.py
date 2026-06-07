@@ -577,6 +577,7 @@ class GameContent:
     score_extractor_shared_prompt: str = ""
     score_extractor_module_prompts: Dict[str, str] = field(default_factory=dict)
     chapter_memory_prompt: str = ""
+    minister_recap_prompt: str = ""
     ending_summary_prompt: str = ""
 
     fiscal_items: List[Dict[str, object]] = field(default_factory=list)
@@ -651,6 +652,7 @@ class GameContent:
                 "personnel_secret": load_text_asset("prompts/score_extractor_personnel_secret.md"),
             },
             chapter_memory_prompt=load_text_asset("prompts/chapter_memory.md"),
+            minister_recap_prompt=load_text_asset("prompts/minister_recap.md"),
             ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),
         )
 

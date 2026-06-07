@@ -295,7 +295,7 @@ class _SeedMixin:
                     note = excluded.note,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (account, account, int(state.metrics[account]), notes[account]),
+                (account, account, float(state.metrics[account]), notes[account]),
             )
 
     def ensure_opening_ledger(self, state: GameState) -> None:
@@ -306,7 +306,7 @@ class _SeedMixin:
             ).fetchone()
             if exists:
                 continue
-            balance = int(state.metrics[account])
+            balance = float(state.metrics[account])
             self.conn.execute(
                 """
                 INSERT INTO economy_ledger

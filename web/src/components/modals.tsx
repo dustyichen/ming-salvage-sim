@@ -88,10 +88,12 @@ export function SecretOrdersModal({
   orders,
   onClose,
   onOpenMinister,
+  onDelete,
 }: {
   orders: SecretOrder[];
   onClose: () => void;
   onOpenMinister: (name: string) => void;
+  onDelete: (order: SecretOrder) => void | Promise<void>;
 }) {
   const [tab, setTab] = React.useState<"active" | "pending_review" | "done" | "failed" | "all">("active");
   const [selectedOrder, setSelectedOrder] = React.useState<SecretOrder | null>(null);
@@ -139,6 +141,19 @@ export function SecretOrdersModal({
               <div className="so-header">
                 <span className="so-title"><Lock size={13} />{o.title}</span>
                 <span className={`so-status ${statusCls[o.status] || ""}`}>{statusLabel[o.status] || o.status}</span>
+                <button
+                  className="so-delete"
+                  title="删除此密令"
+                  aria-label={`删除密令 ${o.title}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (window.confirm(`确定删除密令〔${o.title}〕？此操作不可撤销。`)) {
+                      void onDelete(o);
+                    }
+                  }}
+                >
+                  <Trash2 size={13} />
+                </button>
               </div>
               <div className="so-meta">第 {o.year_issued} 年 {o.period_issued} 月下令 · 承办：{o.minister_name}</div>
               <div className="so-open-hint">点击查看密令详情</div>
@@ -170,6 +185,10 @@ export function SecretOrdersModal({
             onClose();
             onOpenMinister(name);
           }}
+          onDelete={(order) => {
+            setSelectedOrder(null);
+            void onDelete(order);
+          }}
         />
       ) : null}
     </FullscreenModal>
@@ -182,12 +201,14 @@ export function SecretOrderDetailDialog({
   statusCls,
   onClose,
   onOpenMinister,
+  onDelete,
 }: {
   order: SecretOrder;
   statusLabel: Record<string, string>;
   statusCls: Record<string, string>;
   onClose: () => void;
   onOpenMinister: (name: string) => void;
+  onDelete: (order: SecretOrder) => void;
 }) {
   const deadlineText = order.due_turn
     ? `第 ${order.due_turn} 回合核议${order.due_turn <= order.turn_issued ? "" : `（限 ${order.due_turn - order.turn_issued} 个月）`}`
@@ -235,6 +256,17 @@ export function SecretOrderDetailDialog({
               召见 {order.minister_name}
             </button>
           ) : null}
+          <button
+            className="secondary-action so-detail-delete"
+            onClick={() => {
+              if (window.confirm(`确定删除密令〔${order.title}〕？此操作不可撤销。`)) {
+                onDelete(order);
+              }
+            }}
+          >
+            <Trash2 size={15} />
+            删除此密令
+          </button>
           <button className="secondary-action" onClick={onClose}>返回列表</button>
         </footer>
       </section>

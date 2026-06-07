@@ -359,6 +359,7 @@ def build_minister_tools(character: Character, context: CourtContext,
     ) -> str:
         """密令统一入口。action 取值：
         - "issue"：下达新密令。需填 title、content；assignee 留空默认当前大臣；deadline_months=0 无硬限。
+                  限制：不得重复下同一道密令；一个承办人同一时间只能有一条进行中密令；全朝进行中密令最多 5 条。
         - "progress"：汇报进展（兼查历史）。填 order_id；progress 非空且本月未推进则落档。
         - "submit"：提交结案。填 order_id、claim（办结陈词200字内）。
         - "rush"：催办加急。填 order_id；deadline_months=1 下月核议，0=本月即核。

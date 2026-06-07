@@ -50,7 +50,8 @@ TOP_LEVEL_ALIASES = {
     "人物状态变化": "character_status_changes",
     "人物易主": "character_power_changes",
     "后宫册封": "appointments",
-    "密令副作用": "secret_order_updates",
+    "密令进度": "secret_order_updates",
+    "密令副作用": "secret_order_updates",  # 兼容旧 prompt / 旧日志
     "密令结案": "secret_order_closes",
     "崇祯结局": "emperor_fate",
 }
@@ -62,6 +63,7 @@ ITEM_FIELD_ALIASES = {
     "display": "display", "显示名": "display", "名称": "display",
     "init_value": "init_value", "初值": "init_value", "初始值": "init_value",
     "delta": "delta", "增量": "delta",
+    "unit": "unit", "单位": "unit",
     "category": "category", "分类": "category",
     "reason": "reason", "原因": "reason",
     "purpose": "purpose", "用途": "purpose",
@@ -250,7 +252,7 @@ def build_simulator_payload(
 ) -> Dict[str, object]:
     active = db.list_active_issues()
     issues_payload = [
-        issue_to_payload(row, db.list_recent_issue_advances(int(row["id"]), 1))
+        issue_to_payload(row, db.list_issue_advances(int(row["id"])))
         for row in active
     ]
     # 帝国修正不进 simulator payload：它是纯机械的百分比修正符，由落账层自动放大/缩小增量，不进叙事。
@@ -318,7 +320,7 @@ def build_simulator_payload(
         "secret_orders": secret_orders or [],
         # HITL：本回合 simulator 至少应产出的重大决策点数（全局玩法设置，0=不强制）。
         "hitl_min_decisions": _load_hitl_min_decisions(),
-        "data_note": "盘面表（buildings/departments/technologies/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。departments=已设衙门，technologies=已解锁科技（均为玩家诏书所立）；空表只有表头。secret_orders 为皇帝密令列表，独立于 relevant_memories，每条含 id/minister_name/title/content/status/result 字段。",
+        "data_note": "盘面表（buildings/departments/technologies/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。departments=已设衙门，technologies=已解锁科技（均为玩家诏书所立）；空表只有表头。secret_orders 为皇帝密令列表，独立于 relevant_memories；progress/sim_note 是精简时间线，每条仅含 id/time/narrative。",
     }
 
 
@@ -444,7 +446,7 @@ def _extractor_context_payload(
         out: List[Dict[str, object]] = []
         for econ in ongoing.get("economy") or []:
             try:
-                delta = int(econ.get("delta"))
+                delta = float(econ.get("delta"))
             except (TypeError, ValueError):
                 continue
             if delta == 0:
@@ -714,6 +716,60 @@ def _clean_world_advance(raw: object) -> Dict[str, str]:
     return cleaned
 
 
+_CN_DIGITS = {
+    "零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+}
+
+
+def _parse_cn_int(text: str) -> int | None:
+    text = (text or "").strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return int(float(text))
+    total = section = number = 0
+    unit_seen = False
+    for ch in text:
+        if ch in _CN_DIGITS:
+            number = _CN_DIGITS[ch]
+        elif ch in "十百千":
+            unit_seen = True
+            section += (number or 1) * {"十": 10, "百": 100, "千": 1000}[ch]
+            number = 0
+        elif ch == "万":
+            unit_seen = True
+            total += (section + number or 1) * 10000
+            section = number = 0
+        else:
+            return None
+    return total + section + number if unit_seen or number else None
+
+
+def _economy_delta_in_wanliang(item: Dict[str, object]) -> float | None:
+    raw_delta = item.get("delta")
+    try:
+        delta = float(raw_delta)
+    except (TypeError, ValueError):
+        return None
+    unit = str(item.get("unit") or "").strip()
+    text = " ".join(str(item.get(key) or "") for key in ("reason", "category"))
+    combined = f"{unit} {text}"
+    if re.search(r"(?<!万)两", combined) and not re.search(r"万两", combined):
+        sign = -1 if delta < 0 else 1
+        amount = abs(delta)
+        match = re.search(r"([负\-]?[零〇一二两三四五六七八九十百千万\d.]+)\s*两", text)
+        if match:
+            raw_amount = match.group(1)
+            parsed = _parse_cn_int(raw_amount.lstrip("负-"))
+            if parsed is not None:
+                amount = float(parsed)
+                if raw_amount.startswith(("负", "-")):
+                    sign = -1
+        return sign * amount / 10000
+    return delta
+
+
 def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
     cleaned: List[Dict[str, object]] = []
     if not isinstance(raw, list):
@@ -729,9 +785,8 @@ def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
             continue
         if "delta" not in item:
             continue
-        try:
-            delta = int(item.get("delta"))
-        except (TypeError, ValueError):
+        delta = _economy_delta_in_wanliang(item)
+        if delta is None:
             continue
         if delta == 0:
             continue

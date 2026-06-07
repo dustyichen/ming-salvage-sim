@@ -1,5 +1,6 @@
 import React from "react";
 import { createPortal } from "react-dom";
+import { api } from "../api";
 import { formatClosedEffect, formatIssueEffect, issueTone } from "../format";
 import type { ClosedIssue, Issue } from "../types";
 
@@ -85,13 +86,17 @@ export function SituationPanel({ issues, closedIssues, hasLegacies, compact = fa
   );
 }
 
-export function SituationDrawer({ open, issues, closedIssues, onClose }: {
+export function SituationDrawer({ open, issues, closedIssues, onClose, maxDecreeIssues = 10, onChanged }: {
   open: boolean;
   issues: Issue[];
   closedIssues: ClosedIssue[];
   onClose: () => void;
+  maxDecreeIssues?: number;
+  onChanged?: () => void | Promise<void>;
 }) {
   const { active, longTerm, nearTerm } = groupIssues(issues);
+  const manualCount = active.filter((i) => i.is_manual).length;
+  const [editor, setEditor] = React.useState<{ mode: "create" } | { mode: "edit"; issue: Issue } | null>(null);
   return (
     <>
       <div className={`situation-drawer-scrim ${open ? "open" : ""}`} onClick={onClose} />
@@ -104,6 +109,21 @@ export function SituationDrawer({ open, issues, closedIssues, onClose }: {
           <button onClick={onClose} aria-label="关闭局势抽屉">×</button>
         </div>
         <div className="situation-drawer-body">
+          <div className="situation-manual-bar">
+            <span className="situation-manual-count">手动局势 {manualCount} / {maxDecreeIssues}</span>
+            <button
+              type="button"
+              className="situation-manual-add"
+              disabled={manualCount >= maxDecreeIssues}
+              title={manualCount >= maxDecreeIssues ? "已达上限，可在主菜单游戏设置调高" : "手动新建一条局势"}
+              onClick={() => setEditor({ mode: "create" })}
+            >
+              ＋ 新建局势
+            </button>
+          </div>
+          {manualCount >= maxDecreeIssues ? (
+            <p className="situation-manual-hint">已达上限（{maxDecreeIssues}）。可在主菜单「游戏设置」调高，但会增加推演 token 消耗。</p>
+          ) : null}
           {closedIssues.length ? (
             <section className="situation-drawer-section">
               <h3>本回合结案</h3>
@@ -118,26 +138,57 @@ export function SituationDrawer({ open, issues, closedIssues, onClose }: {
               ))}
             </section>
           ) : null}
-          <SituationDrawerGroup title="长期局势" issues={longTerm} />
-          <SituationDrawerGroup title="近期局势" issues={nearTerm} />
+          <SituationDrawerGroup title="长期局势" issues={longTerm} onEdit={(i) => setEditor({ mode: "edit", issue: i })} onChanged={onChanged} />
+          <SituationDrawerGroup title="近期局势" issues={nearTerm} onEdit={(i) => setEditor({ mode: "edit", issue: i })} onChanged={onChanged} />
         </div>
       </aside>
+      {editor ? (
+        <ManualIssueEditor
+          editing={editor.mode === "edit" ? editor.issue : null}
+          onClose={() => setEditor(null)}
+          onSaved={async () => {
+            setEditor(null);
+            await onChanged?.();
+          }}
+        />
+      ) : null}
     </>
   );
 }
 
-function SituationDrawerGroup({ title, issues }: { title: string; issues: Issue[] }) {
+function SituationDrawerGroup({ title, issues, onEdit, onChanged }: {
+  title: string;
+  issues: Issue[];
+  onEdit?: (issue: Issue) => void;
+  onChanged?: () => void | Promise<void>;
+}) {
   if (!issues.length) return null;
   return (
     <section className="situation-drawer-section">
       <h3>{title}</h3>
-      {issues.map((issue) => <SituationDrawerRow issue={issue} key={`drawer-${issue.id}`} />)}
+      {issues.map((issue) => (
+        <SituationDrawerRow issue={issue} key={`drawer-${issue.id}`} onEdit={onEdit} onChanged={onChanged} />
+      ))}
     </section>
   );
 }
 
-function SituationDrawerRow({ issue }: { issue: Issue }) {
+function SituationDrawerRow({ issue, onEdit, onChanged }: {
+  issue: Issue;
+  onEdit?: (issue: Issue) => void;
+  onChanged?: () => void | Promise<void>;
+}) {
   const [detail, setDetail] = React.useState(false);
+  const onDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(`确定删除手动局势〔${issue.title}〕？`)) return;
+    try {
+      await api(`/api/issues/manual/${issue.id}`, { method: "DELETE" });
+      await onChanged?.();
+    } catch (err: any) {
+      window.alert(err?.message || "删除失败");
+    }
+  };
   return (
     <>
       <article
@@ -153,16 +204,98 @@ function SituationDrawerRow({ issue }: { issue: Issue }) {
         }}
       >
         <div className="situation-drawer-row-head">
-          <b>{issue.title}</b>
+          <b>{issue.title}{issue.is_manual ? <span className="situation-manual-tag">手动</span> : null}</b>
           <span>{issue.bar_value}</span>
         </div>
         <div className="situation-bar">
           <i style={{ width: `${Math.max(0, Math.min(100, issue.bar_value))}%` }} />
         </div>
         <p>{issue.stage_text}</p>
+        {issue.is_manual ? (
+          <div className="situation-manual-actions" onClick={(e) => e.stopPropagation()}>
+            <span className="situation-manual-dur">
+              {issue.duration_turns ? `持续 ${issue.duration_turns} 回合` : "无期限"}
+            </span>
+            <button type="button" onClick={(e) => { e.stopPropagation(); onEdit?.(issue); }}>编辑</button>
+            <button type="button" className="danger" onClick={onDelete}>删除</button>
+          </div>
+        ) : null}
       </article>
       {detail ? <SituationDetailModal issue={issue} onClose={() => setDetail(false)} /> : null}
     </>
+  );
+}
+
+// 手动局势新建/编辑弹窗：仅目标(title) + 持续回合数；无成功/失败奖励。
+function ManualIssueEditor({ editing, onClose, onSaved }: {
+  editing: Issue | null;
+  onClose: () => void;
+  onSaved: () => void | Promise<void>;
+}) {
+  const [title, setTitle] = React.useState(editing?.title || "");
+  const [duration, setDuration] = React.useState<number>(editing?.duration_turns || 0);
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState("");
+  const save = async () => {
+    if (!title.trim()) { setErr("目标不能为空"); return; }
+    setBusy(true);
+    setErr("");
+    try {
+      if (editing) {
+        await api(`/api/issues/manual/${editing.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ title: title.trim(), duration_turns: duration }),
+        });
+      } else {
+        await api("/api/issues/manual", {
+          method: "POST",
+          body: JSON.stringify({ title: title.trim(), duration_turns: duration }),
+        });
+      }
+      await onSaved();
+    } catch (e: any) {
+      setErr(e?.message || "保存失败");
+      setBusy(false);
+    }
+  };
+  return createPortal(
+    <div className="situation-detail-backdrop" onClick={onClose}>
+      <div className="situation-detail manual-issue-editor" onClick={(e) => e.stopPropagation()}>
+        <div className="situation-detail-head">
+          <span>{editing ? "编辑手动局势" : "新建手动局势"}</span>
+          <button className="situation-detail-close" onClick={onClose} aria-label="关闭">×</button>
+        </div>
+        <div className="manual-issue-form">
+          {err ? <div className="manual-issue-err">{err}</div> : null}
+          <label>
+            目标
+            <input
+              type="text"
+              value={title}
+              maxLength={60}
+              placeholder="如：整饬蓟镇军备"
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </label>
+          <label>
+            持续回合数
+            <input
+              type="number"
+              min={0}
+              max={120}
+              value={duration}
+              onChange={(e) => setDuration(Math.max(0, Number(e.target.value) || 0))}
+            />
+            <small className="manual-issue-hint">0 = 无期限；&gt;0 到期自动撤销。手动局势无成功/失败奖励。</small>
+          </label>
+          <div className="manual-issue-actions">
+            <button onClick={onClose} disabled={busy}>取消</button>
+            <button className="primary" onClick={save} disabled={busy}>{busy ? "保存中…" : "保存"}</button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 

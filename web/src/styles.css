@@ -5096,6 +5096,144 @@ button:disabled {
   overflow-y: auto;
   padding: 16px 18px 24px;
 }
+
+/* 手动局势管理条 */
+.situation-manual-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.situation-manual-count {
+  font-size: 0.82rem;
+  color: #7a5a35;
+  font-weight: 600;
+}
+.situation-manual-add {
+  padding: 5px 12px;
+  border: 1px solid rgba(122, 58, 37, 0.4);
+  border-radius: 6px;
+  background: rgba(122, 58, 37, 0.08);
+  color: #7a3a25;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.situation-manual-add:hover:not(:disabled) {
+  background: rgba(122, 58, 37, 0.16);
+}
+.situation-manual-add:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.situation-manual-hint {
+  margin: -6px 0 12px;
+  font-size: 0.74rem;
+  color: #a06a3a;
+  line-height: 1.4;
+}
+.situation-manual-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(122, 58, 37, 0.14);
+  color: #7a3a25;
+  font-size: 0.66rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.situation-manual-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.situation-manual-dur {
+  margin-right: auto;
+  font-size: 0.72rem;
+  color: #8a6a45;
+}
+.situation-manual-actions button {
+  padding: 3px 10px;
+  border: 1px solid rgba(98, 70, 34, 0.3);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.35);
+  color: #5a4226;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+.situation-manual-actions button:hover {
+  background: rgba(255, 255, 255, 0.6);
+}
+.situation-manual-actions button.danger {
+  color: #b04040;
+  border-color: rgba(176, 64, 64, 0.4);
+}
+.situation-manual-actions button.danger:hover {
+  background: rgba(176, 64, 64, 0.12);
+}
+
+/* 手动局势新建/编辑表单 */
+.manual-issue-editor {
+  max-width: 420px;
+}
+.manual-issue-form {
+  padding: 16px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.manual-issue-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 0.84rem;
+  color: #5a4226;
+  font-weight: 600;
+}
+.manual-issue-form input {
+  padding: 7px 9px;
+  border: 1px solid rgba(98, 70, 34, 0.3);
+  border-radius: 5px;
+  font-size: 0.88rem;
+}
+.manual-issue-hint {
+  font-weight: 400;
+  font-size: 0.72rem;
+  color: #8a6a45;
+}
+.manual-issue-err {
+  padding: 6px 10px;
+  border-radius: 5px;
+  background: rgba(176, 64, 64, 0.12);
+  color: #b04040;
+  font-size: 0.8rem;
+}
+.manual-issue-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+.manual-issue-actions button {
+  padding: 6px 16px;
+  border: 1px solid rgba(98, 70, 34, 0.3);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.4);
+  color: #5a4226;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+.manual-issue-actions button.primary {
+  background: #7a3a25;
+  color: #f3e6c4;
+  border-color: #7a3a25;
+}
+.manual-issue-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .situation-drawer-section + .situation-drawer-section {
   margin-top: 18px;
 }
@@ -7139,6 +7277,33 @@ button:disabled {
   font-size: 0.92rem;
   font-weight: 700;
   color: #f3e6c4;
+  margin-right: auto;
+}
+
+.so-header > .so-status { margin-left: auto; }
+
+.so-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  padding: 3px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #b08080;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.so-delete:hover {
+  background: rgba(200, 60, 60, 0.18);
+  color: #e08080;
+}
+
+.so-detail-delete {
+  color: #e08080;
+  border-color: rgba(200, 60, 60, 0.4);
 }
 
 .so-status {

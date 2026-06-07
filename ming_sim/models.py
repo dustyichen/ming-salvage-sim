@@ -264,7 +264,7 @@ class GameState:
     turn_phase: str = "summoning"  # summoning | reviewing | issued —— 见 session.TurnPhase
     ended: bool = False  # 结局已触发：游戏终结，拒绝继续召见/结算
     ending_status: str = ""  # 结局类型（context.ENDING_*），ended=True 时有值
-    metrics: Dict[str, int] = field(
+    metrics: Dict[str, float] = field(
         default_factory=lambda: {
             "国库": 320,
             "内库": 440,
@@ -277,7 +277,7 @@ class GameState:
     def clamp(self) -> None:
         for key, value in list(self.metrics.items()):
             if key in ECONOMY_ACCOUNTS:
-                self.metrics[key] = int(value)
+                self.metrics[key] = float(value)
             else:
                 self.metrics[key] = max(0, min(100, value))
 

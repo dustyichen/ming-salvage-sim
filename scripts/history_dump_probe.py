@@ -57,10 +57,10 @@ def _history_messages(db, minister_name):
 
 
 def _do_chat(session, minister_name, text):
-    """复刻 web_app 流程：拼历史 → session.chat → 落 chat_messages。"""
-    history = _history_messages(session.db, minister_name)
-    result = session.chat(minister_name, text, history_messages=history)
-    # 复刻 _chat_payload 落库（整轮 user+minister）
+    """复刻 web_app 流程：session.chat（历史走 agno 每月一个 session 自管）→ 落 chat_messages（仅展示）。
+    注：原自管历史前置已废（改回 agno session 自管），本探针 _history_messages 仅留作旧路对照。"""
+    result = session.chat(minister_name, text)
+    # 复刻 _chat_payload 落库（整轮 user+minister，仅供展示）
     session.db.append_chat_message(minister_name, session.state.turn, "user", text)
     session.db.append_chat_message(minister_name, session.state.turn, "minister", result.answer)
     return result.answer
