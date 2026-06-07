@@ -500,7 +500,7 @@ class _IssuesMixin:
         legacy_key: str = "",
     ) -> int:
         """结案产生持续修正符。start_month=当前绝对月，duration_months=-1 为永久。
-        clear_gate 非空时：靠程序按 _gate_passed 判定消除（见 issues.clear_gated_legacies），与时长无关。"""
+        clear_gate 非空时：靠程序按 gating.evaluate_gate 判定消除（见 issues.clear_gated_legacies），与时长无关。"""
         start_month = int(state.year) * 12 + int(state.period)
         cur = self.conn.execute(
             """INSERT INTO legacies

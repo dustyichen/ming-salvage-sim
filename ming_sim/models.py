@@ -74,7 +74,8 @@ class Event:
     trigger_month: int = 0  # 1-12，0=年内任意月
     trigger_end_year: int = 0   # 候选窗口结束年（0=不设上限）
     trigger_end_month: int = 0  # 候选窗口结束月（0=年内任意月）
-    precondition: str = ""  # 触发前提+改写口子人话说明，喂 simulator 由 LLM 据盘面判断是否改写/跳过（见 season_simulator.md 候选情势触发判定）
+    precondition: str = ""  # 触发前提的人话说明，只喂 simulator 当叙事提示，零程序求值（程序闸看 require）
+    require: Dict[str, object] = field(default_factory=dict)  # 结构化触发前提（布尔树/扁平 dict，见 gating.evaluate_gate）；空=无可证伪前提（历史既定型）。require 不过则 node 不进候选/不触发
     event_type: str = "situation"  # situation=转 bar issue；node=只播报不转 issue；ending=交结局判定
     trigger_gate: Dict[str, str] = field(default_factory=dict)  # seed 候选门槛：{metric: 比较式}，全满足才进候选
     auto_trigger: bool = False  # True=gate 达标即由程序硬立项，绕过 LLM 因果判定（不进候选池等 extractor 决定）
@@ -207,7 +208,7 @@ class OpeningLegacy:
     name: str
     modifiers: Dict[str, object]
     narrative_hint: str
-    clear_gate: Dict[str, str]
+    clear_gate: Dict[str, object]  # gate DSL：布尔树 / 扁平 dict，见 gating.evaluate_gate
     clear_narrative: str = ""
 
 

@@ -512,7 +512,7 @@ class _SchemaMixin:
                 start_month INTEGER NOT NULL,               -- 绝对月 = year*12+period
                 duration_months INTEGER NOT NULL DEFAULT 24,-- 时长；-1=永久
                 status TEXT NOT NULL DEFAULT 'active',      -- active / expired / cleared
-                clear_gate TEXT NOT NULL DEFAULT '{}',      -- 机器消除条件（同 _gate_passed 语法）；非空=靠程序判定消除而非时长
+                clear_gate TEXT NOT NULL DEFAULT '{}',      -- 机器消除条件（gating.evaluate_gate 语法）；非空=靠程序判定消除而非时长
                 legacy_key TEXT NOT NULL DEFAULT '',        -- 开局负面修正对应 opening_legacies.key，去重用
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );

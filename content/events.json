@@ -14,6 +14,16 @@
     "trigger_year": 1629,
     "trigger_month": 6,
     "precondition": "历史既定：崇祯二年六月袁崇焕擅斩毛文龙;前置条件：袁崇焕任辽东巡抚或者督师，持有尚方宝剑 and 袁崇焕在辽东 and 毛文龙在东江镇",
+    "require": {
+      "and": [
+        { "or": [
+            { "key": "char.袁崇焕.office_contains", "op": "contains", "val": "督师" },
+            { "key": "char.袁崇焕.office_contains", "op": "contains", "val": "巡抚" }
+        ]},
+        { "key": "char.袁崇焕.in_region", "op": "==", "val": "liaodong" },
+        { "key": "char.毛文龙.in_region", "op": "==", "val": "dongjiang_area" }
+      ]
+    },
     "event_type": "node"
   },
   {
@@ -47,6 +57,12 @@
     "trigger_year": 1629,
     "trigger_month": 12,
     "precondition": "己巳之变后必发；若 jisi_lubian 未触发或玩家提前罢袁崇焕则跳过",
+    "require": {
+      "and": [
+        { "key": "event.jisi_lubian.triggered", "op": "==", "val": "true" },
+        { "key": "char.袁崇焕.status", "op": "==", "val": "active" }
+      ]
+    },
     "event_type": "node"
   },
   {
@@ -63,7 +79,13 @@
     "fail_condition": "孔耿率部渡海降金，携西洋火炮与匠师投皇太极，明火器优势彻底丧失",
     "trigger_year": 1631,
     "trigger_month": 8,
-    "precondition": "若毛文龙已被斩 + 登莱欠饷严重，必触发；玩家可提前安抚或裁汰旧部"
+    "precondition": "若毛文龙已被斩 + 登莱欠饷严重，必触发；玩家可提前安抚或裁汰旧部",
+    "require": {
+      "and": [
+        { "key": "char.毛文龙.status", "op": "==", "val": "dead" },
+        { "key": "army.denglai.arrears", "op": ">=", "val": 9 }
+      ]
+    }
   },
   {
     "id": "dalingghe",
@@ -79,7 +101,10 @@
     "fail_condition": "祖大寿全军降金且不归，关宁精锐尽失",
     "trigger_year": 1631,
     "trigger_month": 8,
-    "precondition": "辽东请饷未补足 + 关宁筑城仓促时触发"
+    "precondition": "辽东请饷未补足 + 关宁筑城仓促时触发（筑城进度暂无结构化字段，require 只卡硬条件：关宁欠饷未补足）",
+    "require": {
+      "key": "army.guanning.arrears", "op": ">=", "val": 30
+    }
   },
   {
     "id": "lindan_xiqian",
@@ -211,7 +236,10 @@
     "fail_condition": "洛阳陷、福王被烹，李自成势如破竹，河南腹地丧失",
     "trigger_year": 1641,
     "trigger_month": 1,
-    "precondition": "李自成入河南未压制 + 藩禄改革未推时触发",
+    "precondition": "李自成入河南未压制 + 藩禄改革未推时触发（藩禄改革进度暂无结构化字段，require 只卡硬条件：李自成已入河南）",
+    "require": {
+      "key": "event.li_chenghai.triggered", "op": "==", "val": "true"
+    },
     "event_type": "node"
   },
   {
@@ -228,7 +256,10 @@
     "fail_condition": "开封陷于水或战，河南完全沦陷，黄河南北流寇合势",
     "trigger_year": 1642,
     "trigger_month": 9,
-    "precondition": "洛阳陷后必发"
+    "precondition": "洛阳陷后必发",
+    "require": {
+      "key": "event.luoyang_fallen.triggered", "op": "==", "val": "true"
+    }
   },
   {
     "id": "jingshi_plague",

@@ -21,6 +21,7 @@ from ming_sim.constants import (
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
 from ming_sim.db import GameDB, infer_office_type_from_office, normalize_office
+from ming_sim.gating import evaluate_gate
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
     ISSUE_METRIC_LOCK_CAPS,
@@ -671,169 +672,21 @@ def _event_window_open(ev: Event, state: GameState) -> bool:
     return True
 
 
-_GATE_AGG_FUNCS = {
-    "max": max,
-    "min": min,
-    "sum": sum,
-    "avg": lambda xs: sum(xs) // max(1, len(xs)),
-}
-
-
-def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[int]:
-    """把 gate key 解析成一个 int 值。形式：
-      - 'metric_name'                           → metrics[key]
-      - 'region.<id>.<field>'                   → regions 表
-      - 'region.<id1>|<id2>|.<field>.<agg>'     → 多省聚合 (max/min/avg/sum)
-      - 'army.<id>.<field>' / 多军 + agg
-      - 'building.<id>.<field>' / 多建筑 + agg
-      - 'power.<id>.<field>' / 多 + agg
-      - 'class.<name>.<field>'                  → classes 表全国汇总 (region_id='')
-      - 'class.<name>@<region>.<field>'         → classes 表省级
-      - 'class.<name>@<r1>|<r2>|.<field>.<agg>' → 多省同阶级聚合
-    解析失败/数据缺失返回 None（gate 视为不通过，由调用方处理）。
-    """
-    if "." not in key:
-        if key in metrics:
-            return int(metrics[key])
-        return None
-    parts = key.split(".")
-    table = parts[0]
-    if table not in ("region", "army", "building", "power", "class", "faction"):
-        return None
-    # 末段可能是 agg，先抽出
-    agg = None
-    if parts[-1] in _GATE_AGG_FUNCS:
-        agg = parts[-1]
-        parts = parts[:-1]
-    if len(parts) < 3:
-        return None
-    field = parts[-1]
-    id_segment = ".".join(parts[1:-1])
-    if table == "class" and "@" in id_segment and "|" in id_segment.split("@", 1)[1]:
-        # 简写：class.<name>@<r1>|<r2>|<r3>.<field> → 展开成 [name@r1, name@r2, name@r3]
-        cname, rest = id_segment.split("@", 1)
-        ids = [f"{cname}@{r}" for r in rest.split("|") if r]
-    else:
-        ids = id_segment.split("|") if "|" in id_segment else [id_segment]
-        ids = [x for x in ids if x]
-    if not ids:
-        return None
-    # class 表的 id 是 name 或 name@region；其它表 id 就是行 id
-    values: List[int] = []
-    for cid in ids:
-        row = None
-        if table == "region":
-            if field in ("grain_output", "grain_stock"):
-                row = db.conn.execute(
-                    f"SELECT json_extract(fiscal,'$.{field}') FROM regions WHERE id = ?",
-                    (cid,),
-                ).fetchone()
-            else:
-                row = db.conn.execute(f"SELECT {field} FROM regions WHERE id = ?", (cid,)).fetchone()
-        elif table == "army":
-            row = db.conn.execute(f"SELECT {field} FROM armies WHERE id = ?", (cid,)).fetchone()
-        elif table == "building":
-            row = db.conn.execute(f"SELECT {field} FROM buildings WHERE id = ?", (cid,)).fetchone()
-        elif table == "power":
-            row = db.conn.execute(f"SELECT {field} FROM powers WHERE id = ?", (cid,)).fetchone()
-        elif table == "faction":
-            # factions 表主键是 name（中文，如 阉党），field 取 leverage/satisfaction
-            row = db.conn.execute(f"SELECT {field} FROM factions WHERE name = ?", (cid,)).fetchone()
-        elif table == "class":
-            if "@" in cid:
-                cname, rid = cid.split("@", 1)
-            else:
-                cname, rid = cid, ""
-            row = db.conn.execute(
-                f"SELECT {field} FROM classes WHERE name = ? AND region_id = ?",
-                (cname, rid),
-            ).fetchone()
-        if row is None:
-            return None
-        try:
-            values.append(int(row[0]))
-        except (TypeError, ValueError):
-            return None
-    if not values:
-        return None
-    if len(values) == 1:
-        return values[0]
-    if agg is None:
-        # 多 id 但没指明聚合 → 默认 min（最严苛，要全部满足）
-        agg = "min"
-    return _GATE_AGG_FUNCS[agg](values)
-
-
-def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
-    """取一个文本型字段值（如 region.<id>.controlled_by → 'ming'/'houjin'）。
-    仅支持单 id 的 region/army/power 文本字段；解析失败返回 None。
-    """
-    parts = key.split(".")
-    if len(parts) != 3:
-        return None
-    table, cid, field = parts
-    sql = {
-        "region": f"SELECT {field} FROM regions WHERE id = ?",
-        "army": f"SELECT {field} FROM armies WHERE id = ?",
-        "power": f"SELECT {field} FROM powers WHERE id = ?",
-    }.get(table)
-    if sql is None:
-        return None
-    row = db.conn.execute(sql, (cid,)).fetchone()
-    if row is None:
-        return None
-    return str(row[0])
-
-
-def _gate_passed(gate: Dict[str, str], metrics: Dict[str, int], db: GameDB) -> bool:
-    """trigger_gate 全部条件满足才返回 True。条件形如 '<=240'（数值）或 '==ming'（文本相等）。
-    key 形式见 _eval_gate_key。
-    """
-    for key, cond in gate.items():
-        cond = cond.strip()
-        # 文本相等：==<word> / !=<word>（RHS 非纯数字）
-        sm = re.match(r"^(==|!=)\s*(.+)$", cond)
-        if sm and not re.match(r"^-?\d+$", sm.group(2).strip()):
-            sop, sval = sm.group(1), sm.group(2).strip()
-            cur = _eval_gate_key_str(key, db)
-            if cur is None:
-                return False
-            if sop == "==" and cur != sval:
-                return False
-            if sop == "!=" and cur == sval:
-                return False
-            continue
-        m = re.match(r"^(>=|<=|>|<|==)\s*(-?\d+)$", cond)
-        if not m:
-            return False
-        op, num = m.group(1), int(m.group(2))
-        val = _eval_gate_key(key, metrics, db)
-        if val is None:
-            return False
-        if op == ">=" and not val >= num:
-            return False
-        if op == "<=" and not val <= num:
-            return False
-        if op == ">" and not val > num:
-            return False
-        if op == "<" and not val < num:
-            return False
-        if op == "==" and not val == num:
-            return False
-    return True
-
-
 def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     """程序筛选：历史锚定事件按 trigger 时间到点、seed 情势按 trigger_gate 达标，
     都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。"""
     c = _ctx()
     spawned = _spawned_event_refs(db)
     candidates: List[Event] = []
-    # 历史锚定 EVENTS：到点（含错过补出）即进候选
+    # 历史锚定 EVENTS：到点（含错过补出）即进候选；有 require 则须程序求值通过（可证伪前提）。
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
             continue
         if not _event_window_open(ev, state):
+            continue
+        # require 不满足 → 跳过该 node（如袁崇焕不在辽东则斩毛文龙不浮现）。
+        # 无 require（历史既定型）短路，行为不变。
+        if ev.require and not evaluate_gate(ev.require, state.metrics, db):
             continue
         candidates.append(ev)
     # seed 情势：trigger_gate 阈值达标即进候选
@@ -845,7 +698,7 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
             continue
         if not _event_window_open(ev, state):
             continue
-        if _gate_passed(ev.trigger_gate, state.metrics, db):
+        if evaluate_gate(ev.trigger_gate, state.metrics, db):
             candidates.append(ev)
     return candidates
 
@@ -862,12 +715,12 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
         if not ev.auto_trigger:
             continue
         # trigger_gate 为空 = 开局即立的局势，只由 seed_opening_crises 立一次，绝不在此重立。
-        # （空 gate 会被 _gate_passed 判为恒真，必须显式排除，否则每回合都试图重立。）
+        # （空 gate 会被 evaluate_gate 判为恒真，必须显式排除，否则每回合都试图重立。）
         if not ev.trigger_gate:
             continue
         if not _event_window_open(ev, state):
             continue
-        if not _gate_passed(ev.trigger_gate, state.metrics, db):
+        if not evaluate_gate(ev.trigger_gate, state.metrics, db):
             continue
         if ev.event_type != "situation":
             # 非 situation（node/ending）不转 issue，仅记触发避免重复
@@ -2082,7 +1935,7 @@ def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
             gate = {}
         if not gate:
             continue
-        if _gate_passed(gate, state.metrics, db):
+        if evaluate_gate(gate, state.metrics, db):
             db.conn.execute("UPDATE legacies SET status='cleared' WHERE id=?", (int(row["id"]),))
             cleared.append(str(row["name"]))
     if cleared:
@@ -2097,7 +1950,7 @@ def sync_opening_legacies(db: GameDB, state: GameState) -> None:
     - 未达标：该 legacy_key 不存在 active 行则 insert（永久 duration=-1，仅靠 gate 消除）。
     一个函数覆盖新档（全补）/旧档（补缺）/达标档（不补/清残）。"""
     for leg in _ctx().opening_legacies:
-        passed = _gate_passed(leg.clear_gate, state.metrics, db)
+        passed = evaluate_gate(leg.clear_gate, state.metrics, db)
         existing = db.conn.execute(
             "SELECT id FROM legacies WHERE legacy_key=? AND status='active'",
             (leg.key,),
