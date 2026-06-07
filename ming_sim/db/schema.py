@@ -615,6 +615,8 @@ class _SchemaMixin:
         # duration_turns>0 时到期（origin_turn+duration_turns）自动撤销，无成功/失败奖励。
         self.ensure_column("issues", "is_manual", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("issues", "duration_turns", "INTEGER NOT NULL DEFAULT 0")
+        # goal：皇帝给该局势定的目标/意图，喂给推演 simulator 据此逐月推进进度（对所有 issue 生效，玩家可改）。
+        self.ensure_column("issues", "goal", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")
@@ -647,6 +649,9 @@ class _SchemaMixin:
         self.ensure_column("fiscal_config", "direction", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("fiscal_config", "display", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("fiscal_config", "sort_order", "INTEGER NOT NULL DEFAULT 9999")
+        self.ensure_column("fiscal_config", "formula", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("fiscal_config", "basis", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("fiscal_config", "rate_unit", "TEXT NOT NULL DEFAULT ''")
         # economy_ledger 支出结构化标签：仅 extractor 抽出的 economy_moves 填这三列；
         # flows 月固定支出与所有收入留 NULL。purpose 受控枚举见 constants.ECONOMY_PURPOSES。
         self.ensure_column("economy_ledger", "purpose", "TEXT")

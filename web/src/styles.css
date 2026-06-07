@@ -4140,6 +4140,33 @@ button:disabled {
   font-family: "Noto Serif SC", "Songti SC", serif;
 }
 
+/* 御笔自拟栏内：另立手动局势 */
+.desk-manual-issue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(120, 86, 42, 0.25);
+}
+
+.desk-add-issue-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  align-self: flex-start;
+  padding: 7px 18px;
+  border-radius: 3px;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+}
+
+.desk-manual-issue-hint {
+  color: rgba(74, 54, 30, 0.7);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .desk-footer {
   display: flex;
   align-items: center;
@@ -4633,6 +4660,7 @@ button:disabled {
 /* 改/删/新增/存改/返工：墨字宣纸底 */
 .modal-bg-edict .directive-tools button,
 .modal-bg-edict .desk-add-btn,
+.modal-bg-edict .desk-add-issue-btn,
 .modal-bg-edict .seal-btn-ghost,
 .modal-bg-edict .seal-btn-save {
   color: #2a1c0e !important;
@@ -4643,6 +4671,7 @@ button:disabled {
 
 .modal-bg-edict .directive-tools button:hover,
 .modal-bg-edict .desk-add-btn:hover,
+.modal-bg-edict .desk-add-issue-btn:hover,
 .modal-bg-edict .seal-btn-ghost:hover,
 .modal-bg-edict .seal-btn-save:hover {
   background: rgba(255, 240, 210, 0.96) !important;
@@ -4683,6 +4712,7 @@ button:disabled {
 
 .modal-bg-edict .directive-tools button:disabled,
 .modal-bg-edict .desk-add-btn:disabled,
+.modal-bg-edict .desk-add-issue-btn:disabled,
 .modal-bg-edict .seal-btn-ghost:disabled,
 .modal-bg-edict .seal-btn-save:disabled,
 .modal-bg-edict .seal-btn-compose:disabled,
@@ -5192,11 +5222,38 @@ button:disabled {
   color: #5a4226;
   font-weight: 600;
 }
-.manual-issue-form input {
+.manual-issue-form input,
+.manual-issue-form select,
+.manual-issue-form textarea {
   padding: 7px 9px;
   border: 1px solid rgba(98, 70, 34, 0.3);
   border-radius: 5px;
   font-size: 0.88rem;
+  font-family: inherit;
+}
+.manual-issue-form textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+/* 实体固定字段分组（按题材展开：建筑/部门/科技） */
+.manual-issue-entity {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 2px 0;
+  padding: 10px 12px 12px;
+  border: 1px solid rgba(120, 86, 42, 0.28);
+  border-radius: 6px;
+  background: rgba(120, 86, 42, 0.05);
+}
+.manual-issue-entity legend {
+  padding: 0 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #7a3a25;
+}
+.manual-issue-entity label {
+  margin: 0;
 }
 .manual-issue-hint {
   font-weight: 400;
@@ -5231,6 +5288,84 @@ button:disabled {
   border-color: #7a3a25;
 }
 .manual-issue-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 局势目标(goal) 就地查看/编辑（详情弹窗内，对所有 issue 开放） */
+.issue-goal-box {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 11px;
+  border-radius: 6px;
+  background: rgba(120, 86, 42, 0.07);
+  border: 1px solid rgba(120, 86, 42, 0.16);
+}
+.issue-goal-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #7a3a25;
+}
+.issue-goal-edit-btn {
+  padding: 2px 10px;
+  border: 1px solid rgba(122, 58, 37, 0.4);
+  border-radius: 4px;
+  background: rgba(255, 250, 236, 0.6);
+  color: #7a3a25;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.issue-goal-edit-btn:hover {
+  background: rgba(255, 240, 210, 0.9);
+}
+.issue-goal-text {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: #3c2410;
+}
+.issue-goal-empty {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #8a6a45;
+  font-style: italic;
+}
+.issue-goal-box.editing textarea {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid rgba(98, 70, 34, 0.35);
+  border-radius: 5px;
+  font-size: 0.86rem;
+  font-family: inherit;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.issue-goal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.issue-goal-actions button {
+  padding: 5px 14px;
+  border: 1px solid rgba(98, 70, 34, 0.3);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.4);
+  color: #5a4226;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.issue-goal-actions button.primary {
+  background: #7a3a25;
+  color: #f3e6c4;
+  border-color: #7a3a25;
+}
+.issue-goal-actions button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -7984,10 +8119,34 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   padding: 4px 10px;
   font-size: 0.82rem;
   color: #2a1a08;
   border-radius: 3px;
+}
+
+.right-drawer-budget-row > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.right-drawer-budget-row > span > b {
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.right-drawer-budget-row > span > small {
+  color: rgba(78, 50, 18, 0.72);
+  font-size: 0.74rem;
+  line-height: 1.15;
+  white-space: normal;
+}
+
+.right-drawer-budget-row > b {
+  flex: 0 0 auto;
 }
 
 .right-drawer-budget-row:hover {

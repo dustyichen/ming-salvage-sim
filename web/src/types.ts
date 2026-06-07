@@ -200,6 +200,7 @@ export type Issue = {
   effect_on_fail: Record<string, number>;
   is_manual?: boolean;
   duration_turns?: number;
+  goal?: string;
   origin_turn?: number;
 };
 
@@ -238,8 +239,16 @@ export type ClosedIssue = {
 export type BudgetItem = {
   name: string;
   amount: number;
-  base_amount?: number;
   note: string;
+  base_key?: string;
+  rate_key?: string;
+  base?: number;
+  rate?: number;
+  formula?: string;
+  formula_kind?: string;
+  basis?: string;
+  basis_total?: number;
+  rate_unit?: string;
 };
 
 export type BudgetMovement = {

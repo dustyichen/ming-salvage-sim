@@ -18,6 +18,7 @@ input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/cour
 - `decree_text`：本{{TURN_UNIT}}正式诏书（已合并所有准行草案，即本{{TURN_UNIT}}全部旨意）。写明执行者以正文为准；未写明按职掌、名册、局势推定，但承办者必须在册且可办差。
 - `court_roster`（TSV）：人物现职与状态**唯一真值**，列含 `name/office/office_type/faction/status`。官职、派系、是否在朝一律以此为准，不凭史实印象。
 - `regions` / `armies` / `buildings`（TSV）：地区、军队、建筑全表，按列名对齐真实状态。
+- `regions` 省级财政字段看 `data_note` 的中文字段字典，不靠英文猜：`guan_min_tian` 是官民田，`wang_tian` 是藩王庄田，`huang_tian` 是皇庄，`tian_fu_li` 是田赋亩率，`liao_xiang/salt_tax/commerce_tax` 分别是辽饷/盐税/商税月基数。清丈土地要按这些当前值写清楚清的是隐田、藩田、皇庄还是官民田。
 - `departments` / `technologies`（TSV）：已设衙门（军机处/财政部等官署）、已解锁科技（化肥/火器新法等）。空表＝尚未设立。已在表内的别当新设重复立；新立的衙门/科技在「诏书核销」标进展中、「待办未解」立局势，待结案才入此表。
 - `current_state`、`treasury_brief`、`factions_brief`、`classes_brief`、`powers_brief`：钱粮、国势、派系、阶级、外部势力。月度固定收支已由程序落账，叙事只写现象。
 - `active_issues`：在办事项。`stage` 是当前卡点背景，不是本{{TURN_UNIT}}待办命令。
@@ -127,6 +128,8 @@ N+6、陛下未知者             ← 放在奏章正文最后，收束皇帝未
 
 
 只列 `input.active_issues` 已在册的局势 + 本{{TURN_UNIT}}触发的 `candidate_events` + **上一章「诏书核销」标「进展中」转入的新局势**。每条一句写当前状态短语，不写机制数值，不列叙事衍生小事。核销里每一条「进展中」此处都须有对应条目兜住，不得遗漏。
+
+**按目标推进**：`active_issues` 某条带 `目标` 字段时，那是皇帝亲定的方向意图（如「在西苑营建一座宫殿」「设近代火器局」）。本{{TURN_UNIT}}叙事须**优先沿该目标推进其进展**——写朝着目标又走了哪一步（拨料、动工、攻坚、克阻），盘面支撑足则进展快、钱粮人力受阻则进展慢甚至停滞。目标未达成前持续推进，不让它空转漂移。
 
 **候选情势**逐条判 `candidate_events`：先看 `precondition` 再看盘面与诏书；`is_historical=true` 且时点已到、前提未改写则原则上必须浮现（结果受治理影响）；`is_historical=false` 看因果张力，局势已多时宁可少触发；只能从候选清单选，不臆造。
 

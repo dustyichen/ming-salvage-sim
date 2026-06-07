@@ -121,6 +121,7 @@ class _IssuesMixin:
         fail_condition: str = "",
         is_manual: bool = False,
         duration_turns: int = 0,
+        goal: str = "",
     ) -> int:
         if kind not in ("situation", "initiative"):
             raise ValueError(f"issue kind 非法：{kind}")
@@ -136,8 +137,8 @@ class _IssuesMixin:
                 phase, stage_text, status, severity, region_hint, faction_hint,
                 tags, ongoing_effects, cancellable, cancel_cost,
                 effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
-                last_advance_turn, is_manual, duration_turns
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                last_advance_turn, is_manual, duration_turns, goal
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 kind, title, origin_kind, origin_ref, state.turn,
@@ -153,6 +154,7 @@ class _IssuesMixin:
                 state.turn,
                 1 if is_manual else 0,
                 max(0, int(duration_turns or 0)),
+                (goal or "").strip(),
             ),
         )
         self.conn.commit()
@@ -179,8 +181,9 @@ class _IssuesMixin:
         *,
         title: str | None = None,
         duration_turns: int | None = None,
+        goal: str | None = None,
     ) -> bool:
-        """改手动局势：目标(title) / 持续回合数(duration_turns)。
+        """改手动局势：名称(title) / 持续回合数(duration_turns) / 目标(goal)。
         仅 is_manual=1 且 active 可改。返回是否实际更新。"""
         row = self.conn.execute(
             "SELECT id, status, is_manual FROM issues WHERE id=?", (int(issue_id),)
@@ -194,12 +197,30 @@ class _IssuesMixin:
         if duration_turns is not None:
             sets.append("duration_turns=?")
             params.append(max(0, int(duration_turns)))
+        if goal is not None:
+            sets.append("goal=?")
+            params.append(goal.strip())
         if not sets:
             return False
         sets.append("updated_at=CURRENT_TIMESTAMP")
         params.append(int(issue_id))
         self.conn.execute(
             f"UPDATE issues SET {', '.join(sets)} WHERE id=?", params
+        )
+        self.conn.commit()
+        return True
+
+    def update_issue_goal(self, issue_id: int, goal: str) -> bool:
+        """改任意 active 局势的目标(goal)——皇帝给该局势定的推进意图，对所有 issue 开放（不限手动）。
+        仅 active 可改。返回是否实际更新。"""
+        row = self.conn.execute(
+            "SELECT id, status FROM issues WHERE id=?", (int(issue_id),)
+        ).fetchone()
+        if row is None or row["status"] != "active":
+            return False
+        self.conn.execute(
+            "UPDATE issues SET goal=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            ((goal or "").strip(), int(issue_id)),
         )
         self.conn.commit()
         return True

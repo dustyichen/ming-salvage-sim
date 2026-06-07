@@ -1003,6 +1003,7 @@ function App() {
               hasLegacies={(state.legacies || []).length > 0}
               compact
               onOpenDrawer={() => setSituationDrawerOpen(true)}
+              onChanged={() => loadState()}
             />
           </QuadFrame>
         ) : null}
@@ -1077,6 +1078,7 @@ function App() {
         issues={state.issues}
         closedIssues={state.closed_this_turn || []}
         maxDecreeIssues={state.max_decree_issues ?? 10}
+        regions={(state.regions || []).filter((r) => (r.controlled_by ?? "ming") === "ming").map((r) => ({ id: r.id, name: r.name }))}
         onChanged={() => loadState()}
         onClose={() => setSituationDrawerOpen(false)}
       />
@@ -1240,6 +1242,7 @@ function App() {
             onRejectDirective={rejectDirective}
             onConfirmAllDirectives={confirmAllDirectives}
             onGoToCourtChat={() => { setActiveModal("none"); setDrawerOpen(true); }}
+            onIssueCreated={() => loadState()}
           />
         </FullscreenModal>
       ) : null}

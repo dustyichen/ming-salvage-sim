@@ -4,6 +4,7 @@ import { api } from "../api";
 import { ExtractionView } from "./extraction";
 import { FullscreenModal, MinisterPortrait, cacheBust } from "./hud";
 import { formatClosedEffect } from "../format";
+import { ManualIssueEditor } from "./situation";
 import type { ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, SecretOrder, Suggestion } from "../types";
 
 export function ReportModal({ report, onClose }: { report: string; onClose: () => void }) {
@@ -772,6 +773,7 @@ export function EdictModal({
   onRejectDirective,
   onConfirmAllDirectives,
   onGoToCourtChat,
+  onIssueCreated,
 }: {
   state: GameState;
   directiveText: string;
@@ -797,6 +799,7 @@ export function EdictModal({
   onRejectDirective: (directiveId: number) => void;
   onConfirmAllDirectives: () => void;
   onGoToCourtChat: () => void;
+  onIssueCreated: () => void | Promise<void>;
 }) {
   const pendingDirectives = React.useMemo(() => state.directives.filter((d) => d.status === "pending"), [state.directives]);
   const draftDirectives = React.useMemo(() => state.directives.filter((d) => d.status !== "pending"), [state.directives]);
@@ -804,6 +807,13 @@ export function EdictModal({
   const hasPending = pendingDirectives.length > 0;
   const [decreeDraft, setDecreeDraft] = React.useState(decree);
   const [dialogDirectiveId, setDialogDirectiveId] = React.useState<number | null>(null);
+  const [issueEditorOpen, setIssueEditorOpen] = React.useState(false);
+  const manualIssueCount = React.useMemo(
+    () => (state.issues || []).filter((i) => i.is_manual && (i.kind === "situation" || i.kind === "initiative")).length,
+    [state.issues],
+  );
+  const maxManualIssues = state.max_decree_issues ?? 10;
+  const manualIssueFull = manualIssueCount >= maxManualIssues;
   const dialogDirective = allDirectives.find((d) => d.id === dialogDirectiveId) || null;
   const openDirectiveDialog = (directive: Directive) => {
     setDialogDirectiveId(directive.id);
@@ -949,6 +959,18 @@ export function EdictModal({
           <button className="desk-add-btn" onClick={onCreateDirective} disabled={!!busy || !directiveText.trim()}>
             <Edit3 size={14} />新增草案
           </button>
+          <div className="desk-manual-issue">
+            <button
+              type="button"
+              className="desk-add-issue-btn"
+              onClick={() => setIssueEditorOpen(true)}
+              disabled={!!busy || manualIssueFull}
+              title={manualIssueFull ? `手动局势已达上限（${maxManualIssues}），可在主菜单游戏设置调高` : "另立一条可追踪的手动局势"}
+            >
+              <Landmark size={14} />＋ 新建局势
+            </button>
+            <small className="desk-manual-issue-hint">手动局势 {manualIssueCount} / {maxManualIssues} · 仅记目标，无成功/失败奖励</small>
+          </div>
           {busy && <div className="busy-line"><Loader2 size={15} />{busy}...</div>}
           {error && <div className="error-line" role="alert">{error}</div>}
         </section>
@@ -981,6 +1003,18 @@ export function EdictModal({
             </footer>
           </section>
         </div>
+      ) : null}
+
+      {issueEditorOpen ? (
+        <ManualIssueEditor
+          editing={null}
+          regions={(state.regions || []).filter((r) => (r.controlled_by ?? "ming") === "ming").map((r) => ({ id: r.id, name: r.name }))}
+          onClose={() => setIssueEditorOpen(false)}
+          onSaved={async () => {
+            setIssueEditorOpen(false);
+            await onIssueCreated();
+          }}
+        />
       ) : null}
 
       <div className="desk-footer">

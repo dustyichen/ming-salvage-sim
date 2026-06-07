@@ -46,7 +46,7 @@ from ming_sim.issues import _format_issue_ongoing
 from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX
 from ming_sim.context import character_context_with_db, match_minister_from_text
-from ming_sim.constants import TURN_UNIT
+from ming_sim.constants import TURN_UNIT, BUILDING_CATEGORIES
 from ming_sim.flows import calc_province_fiscal, compute_budget_lines
 from ming_sim.simulation import build_simulator_payload
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
@@ -984,6 +984,7 @@ class WebGame:
                 "effect_on_fail": dict(json.loads(str(row["effect_on_fail"] or "{}"))),
                 "is_manual": bool(row["is_manual"]) if "is_manual" in row.keys() else False,
                 "duration_turns": int(row["duration_turns"] or 0) if "duration_turns" in row.keys() else 0,
+                "goal": (row["goal"] if "goal" in row.keys() else "") or "",
                 "origin_turn": int(row["origin_turn"] or 0),
             })
         return payloads
@@ -1938,19 +1939,20 @@ class WebGame:
             {"label": "拟旨", "text": "拟旨如下：", "prefix": True},
             {"label": "下密令", "text": "密令如下：", "prefix": True},
         ]
+        extra_suggestions: List[Dict[str, str]] = []
         runtime_ids = {item["id"] for item in self._runtime_skill_payloads(character)}
         # office 专属快捷话术 chip 走 offices.court_grant_json(DB 唯一真相，seed 自 skills.json)，
         # 固定开头话术硬触发对应 agno skill。加新 office chip 改 JSON 升版本，运行时改直接 UPDATE DB。
         _grant = self.db.get_office_court_grant(character.office_type)
         for chip in (_grant.get("chips") or []):
-            suggestions.insert(1, dict(chip))
+            extra_suggestions.append(dict(chip))
         if "check_treasury" in runtime_ids:
-            suggestions.insert(1, {"label": "查钱粮", "text": "太仓和内库实数如何？本月哪些钱最急？"})
+            extra_suggestions.append({"label": "查钱粮", "text": "太仓和内库实数如何？本月哪些钱最急？"})
         if "query_army_roster" in runtime_ids:
-            suggestions.insert(1, {"label": "查驻军", "text": "查一下关宁军、京营和陕西边军的士气、欠饷与补给。"})
+            extra_suggestions.append({"label": "查驻军", "text": "查一下关宁军、京营和陕西边军的士气、欠饷与补给。"})
         if "secret_order" in runtime_ids:
-            suggestions.insert(1, {"label": "密查", "text": "哪些账册和人物最该先密查？"})
-        return suggestions[:6]
+            extra_suggestions.append({"label": "密查", "text": "哪些账册和人物最该先密查？"})
+        return suggestions + extra_suggestions
 
 
 def sse_event(event: str, data: Dict[str, Any]) -> str:
@@ -2408,25 +2410,80 @@ async def api_delete_secret_order(order_id: int) -> Dict[str, Any]:
     return {"deleted": True, "order_id": order_id}
 
 
+class ManualIssueEntity(BaseModel):
+    """走满 100 落成的实体固定字段（玩家在前端按题材填）。kind ∈ building/department/technology。"""
+    kind: str = ""               # building / department / technology
+    name: str = ""               # 实体名（不填则用局势标题）
+    # 建筑用：
+    region_id: str = ""          # 所在省份（玩家下拉选）
+    category: str = "民生"        # 建筑类别：财政/军事/民生/科技/交通/内廷
+    maintenance: int = 1         # 月维护费（万两）
+    output_metric: str = ""      # 产出去向（可空）
+    output_amount: int = 0       # 产出量
+    # 部门用：
+    authority_scope: str = ""    # 职权范围
+    power: int = 50              # 权力值
+    # 科技用：
+    effect_summary: str = ""     # 效果摘要
+
+
 class ManualIssueCreateRequest(BaseModel):
-    # 目标（局势标题），必填。
+    # 名称（局势标题），必填。
     title: str = ""
     # 持续回合数；0=无硬期限，>0 到期自动撤销（无奖励）。
     duration_turns: int = 0
+    # 目标：皇帝给该局势定的方向意图，喂给推演逐月推进。立项后锁定不可改。
+    goal: str = ""
+    # 分类（题材），落 tags；与 ISSUE_THEMES 对齐。
+    tags: list[str] = []
+    # 走满后落成的实体固定字段（玩家填）。组装成 effect_on_resolve 立项即预埋，走满直接落地。
+    entity: ManualIssueEntity | None = None
 
 
 class ManualIssueUpdateRequest(BaseModel):
+    # 注意：goal 立项后锁定，不在此可改。
     title: str | None = None
     duration_turns: int | None = None
 
 
+def _build_manual_resolve_effect(entity: "ManualIssueEntity | None", title: str) -> dict:
+    """把玩家填的实体固定字段组装成 effect_on_resolve（走满 100 时由结算链落实体）。
+    建筑→buildings、部门→departments、科技→technologies。entity 空或 kind 不识别则返回 {}。"""
+    if entity is None or not str(entity.kind or "").strip():
+        return {}
+    name = (entity.name or "").strip() or title[:60]
+    k = str(entity.kind).strip().lower()
+    if k == "building":
+        cat = entity.category if entity.category in BUILDING_CATEGORIES else "民生"
+        return {"buildings": [{
+            "action": "create", "region_id": (entity.region_id or "").strip(),
+            "name": name, "category": cat,
+            "maintenance": max(0, int(entity.maintenance or 0)),
+            "output_metric": (entity.output_metric or "").strip(),
+            "output_amount": max(0, int(entity.output_amount or 0)),
+        }]}
+    if k == "department":
+        return {"departments": [{
+            "action": "create", "name": name,
+            "authority_scope": (entity.authority_scope or "").strip(),
+            "power": max(0, min(100, int(entity.power or 50))),
+        }]}
+    if k == "technology":
+        return {"technologies": [{
+            "action": "create", "name": name, "category": "科技",
+            "effect_summary": (entity.effect_summary or "").strip(),
+        }]}
+    return {}
+
+
 @app.post("/api/issues/manual")
 async def api_create_manual_issue(request: ManualIssueCreateRequest) -> Dict[str, Any]:
-    """皇帝手动新建一条 decree 局势（无成功/失败奖励，可设持续回合数）。"""
+    """皇帝手动新建一条 decree 局势。按题材填的实体固定字段立项即预埋进 effect_on_resolve，
+    走满 100 直接落成该实体（建筑/部门/科技），不依赖大模型现填。goal 立项后锁定不可改。"""
     game = get_game()
     title = request.title.strip()
     if not title:
-        raise HTTPException(status_code=400, detail="目标（标题）不能为空")
+        raise HTTPException(status_code=400, detail="名称（标题）不能为空")
     max_n = int(load_runtime_game().get("max_decree_issues", 10))
     cur = game.db.count_active_manual_issues()
     if cur >= max_n:
@@ -2434,6 +2491,17 @@ async def api_create_manual_issue(request: ManualIssueCreateRequest) -> Dict[str
             status_code=409,
             detail=f"手动局势已达上限（{max_n} 条），请先撤销部分局势，或在主菜单游戏设置调高上限。当前：{cur} 条。",
         )
+    tags = [str(t).strip() for t in (request.tags or []) if str(t).strip()]
+    resolve_effect = _build_manual_resolve_effect(request.entity, title)
+    # 建筑预埋校验省份：玩家选的 region_id 必须是大明控制的省（不能建到外部势力地盘）。
+    bld = (resolve_effect.get("buildings") or [{}])[0] if resolve_effect.get("buildings") else None
+    if bld is not None:
+        rid = str(bld.get("region_id") or "").strip()
+        row = game.db.conn.execute("SELECT controlled_by FROM regions WHERE id=?", (rid,)).fetchone() if rid else None
+        if row is None:
+            raise HTTPException(status_code=400, detail=f"请为该建筑选择一个有效省份（当前：{rid or '未选'}）。")
+        if str(row["controlled_by"]) != "ming":
+            raise HTTPException(status_code=400, detail="只能在大明控制的省份营建，不能建到外部势力地盘。")
     issue_id = game.db.insert_issue(
         game.session.state,
         kind="situation",
@@ -2442,17 +2510,20 @@ async def api_create_manual_issue(request: ManualIssueCreateRequest) -> Dict[str
         origin_ref="manual",
         bar_value=40,
         stage_text=title[:60],
+        tags=tags,
         cancellable="decree",
+        effect_on_resolve=resolve_effect,
         is_manual=True,
         duration_turns=max(0, int(request.duration_turns or 0)),
+        goal=(request.goal or "").strip(),
     )
-    print(f"[issue/api] 手动新建局势 id={issue_id} title={title!r} duration={request.duration_turns}")
+    print(f"[issue/api] 手动新建局势 id={issue_id} title={title!r} tags={tags} 预埋effect={resolve_effect}")
     return {"id": issue_id, "title": title, "duration_turns": max(0, int(request.duration_turns or 0))}
 
 
 @app.patch("/api/issues/manual/{issue_id}")
 async def api_update_manual_issue(issue_id: int, request: ManualIssueUpdateRequest) -> Dict[str, Any]:
-    """改手动 decree 局势：目标 / 持续回合数。"""
+    """改手动 decree 局势：名称 / 持续回合数。goal 立项后锁定，不可改。"""
     ok = get_game().db.update_manual_issue(
         issue_id, title=request.title, duration_turns=request.duration_turns
     )
