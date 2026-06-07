@@ -613,6 +613,7 @@ def issue_to_payload(row: sqlite3.Row, advances: List[sqlite3.Row]) -> Dict[str,
     resolve_cond = row["resolve_condition"] if "resolve_condition" in keys else ""
     fail_cond = row["fail_condition"] if "fail_condition" in keys else ""
     goal = (row["goal"] if "goal" in keys else "") or ""
+    assignee = (row["assignee"] if "assignee" in keys else "") or ""
     timeline = [
         {
             "id": int(a["id"]),
@@ -643,6 +644,8 @@ def issue_to_payload(row: sqlite3.Row, advances: List[sqlite3.Row]) -> Dict[str,
     }
     if goal.strip():
         payload["目标"] = goal.strip()
+    if assignee.strip():
+        payload["承办人"] = assignee.strip()
     return payload
 
 
@@ -784,6 +787,9 @@ def show_active_issues(db: GameDB) -> None:
         inertia = int(row["inertia"])
         ongoing_txt = _format_issue_ongoing(row["ongoing_effects"] or "{}")
         line_parts = [_format_inertia(inertia)]
+        assignee = str((row["assignee"] if "assignee" in row.keys() else "") or "").strip()
+        if assignee:
+            line_parts.append(f"承办：{assignee}")
         if ongoing_txt:
             line_parts.append(f"每{TURN_UNIT}固定：{ongoing_txt}")
         print(f"  {' | '.join(line_parts)}")
@@ -846,7 +852,10 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event) -> Optional[int]:
         ongoing = {"metrics": {"皇威": 1}}
         inertia = +10
         polarity = "pos"
-    effect_resolve, effect_fail = _situation_terminal_effects(ev.kind, int(ev.severity), polarity)
+    # resolve 效果按 kind/severity 推缺省（所有 situation 都有达成回血）；
+    # fail 效果不推断——崩坏与否一律由事件 JSON 显式声明（effect_on_fail 非空才会崩）。
+    effect_resolve = _situation_resolve_effect(ev.kind, int(ev.severity), polarity)
+    effect_fail: Dict[str, object] = {}
     # 精调字段优先：合并自 opening_crises 的手调危机带 bar/ongoing/effect/meaning，直接用其值；
     # 缺省（0/空）则用上面按 severity/kind 推导的默认。
     if ev.bar_value:
@@ -887,21 +896,14 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event) -> Optional[int]:
         return None
 
 
-# 会崩坏的局势：人为可控、有明确「彻底失败」时刻——镇压不住/边镇沦陷/朝局崩坏。
-# 它们 bar 能跌到 0、status 转 failed 终结，落 effect_on_fail 一锤子永久重创。
-# 不在此集合的（天灾/饥荒等不可控天象、正面机遇）无失败态：bar 下限 1、永不 failed、
-# effect_on_fail 留空，伤害全靠 ongoing_effects 持续累积。db.advance_issue 据 effect_on_fail
-# 是否非空来判能否崩坏，故此处「会崩坏」与「非空 fail effect」必须一致。
-_COLLAPSIBLE_KINDS = frozenset({
-    "人祸", "兵变", "流寇", "民变", "抗税", "党争", "朝议", "外族", "边事",
-})
+def _situation_resolve_effect(kind: str, severity: int, polarity: str) -> Dict[str, object]:
+    """situation 达成（bar→100）的一锤子永久回血/加成。所有 situation 都有。
+    按 severity 推量级（轻 50 / 中 65 / 重 80），民心/皇威由 kind 倾向决定
+    （边事/外族偏皇威，灾害/民变偏民心，余者两者兼得）。
 
-
-def _situation_terminal_effects(kind: str, severity: int, polarity: str):
-    """situation 终结一锤子永久效果。按 severity 推量级（轻 50 / 中 65 / 重 80）。
-    resolve：达成（bar→100）落永久回血/加成，所有 situation 都有。
-    fail：仅「会崩坏」局势（_COLLAPSIBLE_KINDS）有，崩坏（bar→0）落永久重创，幅度重于回血。
-    民心/皇威由 kind 倾向决定（边事/外族偏皇威，灾害/民变偏民心，余者两者兼得）。"""
+    失败效果（effect_on_fail）不在此推断——崩坏与否一律由事件 JSON 显式声明
+    （effect_on_fail 非空=会崩坏，空=不崩，只靠 ongoing_effects 持续流血）。
+    见 db.advance_issue 的 can_collapse 判定。"""
     mag = 1 if severity < 55 else (2 if severity < 70 else 3)
     if kind in ("外族", "边事", "友邦", "归附", "盟约", "战机", "敌乱"):
         axis = "皇威"
@@ -910,17 +912,14 @@ def _situation_terminal_effects(kind: str, severity: int, polarity: str):
     else:
         axis = "both"
 
-    def _metrics(amount: int) -> Dict[str, int]:
-        if axis == "both":
-            half = max(1, abs(amount) // 2)
-            s = 1 if amount > 0 else -1
-            return {"民心": s * half, "皇威": s * half}
-        return {axis: amount}
-
-    resolve_amt = (3 if polarity == "neg" else 4) * mag
-    effect_resolve = {"metrics": _metrics(resolve_amt)}
-    effect_fail = {"metrics": _metrics(-5 * mag)} if kind in _COLLAPSIBLE_KINDS else {}
-    return effect_resolve, effect_fail
+    amount = (3 if polarity == "neg" else 4) * mag
+    if axis == "both":
+        half = max(1, abs(amount) // 2)
+        s = 1 if amount > 0 else -1
+        metrics = {"民心": s * half, "皇威": s * half}
+    else:
+        metrics = {axis: amount}
+    return {"metrics": metrics}
 
 
 def _normalize_cancellable(raw: object) -> str:
@@ -1116,6 +1115,79 @@ def _effect_has_entity(effect: Dict[str, object]) -> bool:
     return False
 
 
+def _auto_issue_delta_by_assignee(db: GameDB, row: sqlite3.Row) -> tuple[int, str]:
+    """LLM 漏抽/填 0 时的兜底：issue 不能静止，按承办人状态与自身惯性给轻微变化。"""
+    assignee = str((row["assignee"] if "assignee" in row.keys() else "") or "").strip()
+    inertia = int(row["inertia"] or 0)
+    if assignee:
+        ch = db.conn.execute(
+            """
+            SELECT name, office, office_type, status, ability, loyalty, integrity, courage
+            FROM characters WHERE name=?
+            """,
+            (assignee,),
+        ).fetchone()
+        if ch is None:
+            return -2, f"承办人{assignee}不在名册，责任无着，本月误期。"
+        if str(ch["status"]) != "active":
+            return -3, f"承办人{assignee}已非在朝，事项无人实办，本月转坏。"
+        score = (
+            int(ch["ability"] or 50) * 0.45
+            + int(ch["loyalty"] or 50) * 0.25
+            + int(ch["integrity"] or 50) * 0.20
+            + int(ch["courage"] or 50) * 0.10
+        )
+        if score >= 72:
+            return 3, f"承办人{assignee}督办得力，按既定目标小有推进。"
+        if score >= 55:
+            return 1, f"承办人{assignee}按部办理，本月略有进展。"
+        return -2, f"承办人{assignee}才具或操守不足，部下推诿，本月受阻。"
+    if inertia > 0:
+        return min(3, max(1, inertia)), "无专责承办，仍循既有势头小幅推进。"
+    if inertia < 0:
+        return max(-3, min(-1, inertia)), "无专责承办，局势按旧患自然转坏。"
+    return -1, "无专责承办，文移空转一月，事项轻微误期。"
+
+
+def _ensure_issue_monthly_motion(
+    db: GameDB,
+    state: GameState,
+    touched_ids: set,
+    applied_advances: List[Dict[str, object]],
+    compact_log: Callable[[object], str],
+) -> None:
+    """保证每条 active issue 每月有非 0 推进。模型漏条/填 0 时由程序补一条轻微变化。"""
+    for row in db.list_active_issues():
+        issue_id = int(row["id"])
+        if issue_id in touched_ids:
+            continue
+        delta, narrative = _auto_issue_delta_by_assignee(db, row)
+        if delta == 0:
+            delta = -1
+        new_row = db.advance_issue(
+            state,
+            issue_id,
+            trigger_kind="auto_assignee",
+            delta_bar=delta,
+            stage_text=str(row["stage_text"] or "")[:120],
+            narrative=compact_log(narrative),
+            metric_delta={},
+        )
+        if new_row is None:
+            continue
+        touched_ids.add(issue_id)
+        applied_advances.append({
+            "issue_id": issue_id,
+            "title": new_row["title"],
+            "from_value": int(new_row["bar_value"]) - delta,
+            "to_value": int(new_row["bar_value"]),
+            "stage_text": new_row["stage_text"],
+            "status": new_row["status"],
+            "narrative": narrative,
+            "auto_assignee": True,
+        })
+
+
 def apply_issue_tracker_output(
     db: GameDB,
     state: GameState,
@@ -1136,6 +1208,8 @@ def apply_issue_tracker_output(
         except (TypeError, ValueError):
             continue
         delta_bar = int(adv.get("delta_bar") or 0)
+        if delta_bar == 0:
+            continue
         inertia_delta = int(adv.get("inertia_delta") or 0)
         stage_text = str(adv.get("stage_text") or "")[:120]
         narrative = compact_log(adv.get("narrative") or "")
@@ -1275,6 +1349,7 @@ def apply_issue_tracker_output(
                 effect_on_fail=dict(ni.get("effect_on_fail") or {}),
                 resolve_condition=str(ni.get("resolve_condition") or "")[:300],
                 fail_condition=str(ni.get("fail_condition") or "")[:300],
+                assignee=str(ni.get("assignee") or ""),
             )
             decree_active += 1
             if kind == "initiative":
@@ -1302,7 +1377,7 @@ def apply_issue_tracker_output(
             db.advance_issue(
                 state, issue_id,
                 trigger_kind="decree",
-                delta_bar=0,
+                delta_bar=-2,
                 stage_text=row["stage_text"],
                 narrative=compact_log(cn.get("narrative") or "陛下欲罢，然此事非诏可消。"),
                 metric_delta={"皇威": -2},
@@ -1324,6 +1399,8 @@ def apply_issue_tracker_output(
         )
         touched_ids.add(issue_id)
         applied_cancels.append({"issue_id": issue_id, "rejected": False, "title": row["title"]})
+
+    _ensure_issue_monthly_motion(db, state, touched_ids, applied_advances, compact_log)
 
     state.clamp()
     return {

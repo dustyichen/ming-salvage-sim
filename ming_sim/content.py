@@ -96,6 +96,14 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
         # key 形式与布尔树结构见 gating.evaluate_gate；id/field 存在性由 runtime 求值器校验。
         trigger_gate = validate_gate_expr(item.get("trigger_gate") or {}, f"{filename}[{idx}].trigger_gate")
         require = validate_gate_expr(item.get("require") or {}, f"{filename}[{idx}].require")
+        ev_trigger_year = int(item.get("trigger_year") or 0)
+        # is_historical：JSON 显式声明优先；未填则缺省 = trigger_year>0（沿用旧推断）。
+        if "is_historical" in item:
+            if not isinstance(item["is_historical"], bool):
+                raise SystemExit(f"{filename}[{idx}].is_historical 应为布尔值 true/false（得到 {item['is_historical']!r}）。")
+            ev_is_historical = item["is_historical"]
+        else:
+            ev_is_historical = ev_trigger_year > 0
         events.append(
             Event(
                 id=str_field(item, "id", f"{filename}[{idx}]"),
@@ -109,8 +117,9 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 audiences=string_list(item.get("audiences"), f"{filename}[{idx}].audiences"),
                 resolve_condition=str(item.get("resolve_condition") or ""),
                 fail_condition=str(item.get("fail_condition") or ""),
-                trigger_year=int(item.get("trigger_year") or 0),
+                trigger_year=ev_trigger_year,
                 trigger_month=int(item.get("trigger_month") or 0),
+                is_historical=ev_is_historical,
                 trigger_end_year=int(item.get("trigger_end_year") or 0),
                 trigger_end_month=int(item.get("trigger_end_month") or 0),
                 precondition=str(item.get("precondition") or ""),

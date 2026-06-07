@@ -145,6 +145,7 @@ ITEM_FIELD_ALIASES = {
     "kind": "kind", "类型": "kind",
     "tags": "tags", "题材": "tags",
     "title": "title", "标题": "title",
+    "assignee": "assignee", "承办人": "assignee", "主责大臣": "assignee", "负责人": "assignee",
     "bar_value": "bar_value", "当前进度": "bar_value",
     "expected_months": "expected_months", "预计月数": "expected_months",
     "resolve_condition": "resolve_condition", "解决条件": "resolve_condition",
@@ -241,6 +242,7 @@ ITEM_FIELD_LABELS = {
     "id": "编号",
     "kind": "类型",
     "title": "标题",
+    "assignee": "承办人",
     "bar_value": "当前进度",
     "expected_months": "预计月数",
     "resolve_condition": "解决条件",
@@ -337,7 +339,7 @@ def build_simulator_payload(
             "kind": ev.kind,
             "summary": ev.summary,
             "interests": ev.interests,
-            "is_historical": ev.trigger_year > 0,
+            "is_historical": bool(ev.is_historical),
             "resolve_condition": ev.resolve_condition,
             "fail_condition": ev.fail_condition,
             "precondition": ev.precondition,
@@ -550,6 +552,7 @@ def _extractor_context_payload(
             "cancellable": r["cancellable"],
             "resolve_condition": (r["resolve_condition"] if "resolve_condition" in r.keys() else "") or "(未填)",
             "fail_condition": (r["fail_condition"] if "fail_condition" in r.keys() else "") or "(未填)",
+            "assignee": (r["assignee"] if "assignee" in r.keys() else "") or "",
         }
         for r in active
     ]
