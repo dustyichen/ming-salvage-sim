@@ -80,7 +80,7 @@ class _FiscalMixin:
         def _seed_missing() -> None:
             """老档升版的默认迁移：只补 JSON 有、库里没有的 key（不覆盖既有值、不复活已删项）。"""
             self.conn.executemany(
-                f"INSERT OR IGNORE INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT OR IGNORE INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [_meta(rec) for rec in rows],
             )
 
