@@ -44,11 +44,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--set-metric", action="append", default=[], metavar="KEY=VAL",
                    help="结算前直接改核心指标内存值，如 国库=99999。metrics 是内存态，"
                         "必须走这条而非 --sql（--sql 改 DB 行会被结算回写覆盖）。可多次。")
+    p.add_argument("--keep-hitl", action="store_true",
+                   help="保留 HITL 决策点（默认本次 run 强制 HITL_MIN_DECISIONS=0 关掉，"
+                        "结算单步直通；点对点验落库不想被决策点暂停时用默认即可）。"
+                        "要复现/调试 HITL 行为则加本开关。env 已显式设了 HITL_MIN_DECISIONS 时本开关不覆盖它。")
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+
+    # 默认关 HITL：点对点验落库不想被决策点暂停。复用 load_runtime_game 的
+    # HITL_MIN_DECISIONS env 覆盖（不污染 runtime_game.json）。用户已显式设了就尊重之。
+    if not args.keep_hitl and "HITL_MIN_DECISIONS" not in os.environ:
+        os.environ["HITL_MIN_DECISIONS"] = "0"
+        print("[hitl] 已关闭决策点（HITL_MIN_DECISIONS=0），单步结算。--keep-hitl 可保留。")
 
     db_path = args.db
     agno_db = args.agno_db or db_path.replace(".db", "_agno.db")
