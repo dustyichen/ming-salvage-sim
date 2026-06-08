@@ -261,6 +261,7 @@ export function ManualIssueEditor({ editing, regions = [], presetTrees, onClose,
   const [title, setTitle] = React.useState(editing?.title || "");
   const [duration, setDuration] = React.useState<number>(editing?.duration_turns || 0);
   const [goal, setGoal] = React.useState(editing?.goal || "");
+  const [assignee, setAssignee] = React.useState(editing?.assignee || "");
   const [category, setCategory] = React.useState<string>(editing?.tags?.[0] || "工程");
   // 实体固定字段（按题材展开）
   const [regionId, setRegionId] = React.useState<string>(regions[0]?.id || "");
@@ -309,7 +310,7 @@ export function ManualIssueEditor({ editing, regions = [], presetTrees, onClose,
         // 编辑：仅名称/持续可改。goal 立项后锁定、实体固定字段不可改。
         await api(`/api/issues/manual/${editing.id}`, {
           method: "PATCH",
-          body: JSON.stringify({ title: title.trim(), duration_turns: duration }),
+          body: JSON.stringify({ title: title.trim(), duration_turns: duration, assignee: assignee.trim() }),
         });
       } else {
         // 按题材组装实体固定字段，立项预埋。
@@ -334,7 +335,7 @@ export function ManualIssueEditor({ editing, regions = [], presetTrees, onClose,
         }
         await api("/api/issues/manual", {
           method: "POST",
-          body: JSON.stringify({ title: title.trim(), duration_turns: duration, goal: goal.trim(), tags: [category], entity }),
+          body: JSON.stringify({ title: title.trim(), duration_turns: duration, goal: goal.trim(), assignee: assignee.trim(), tags: [category], entity }),
         });
       }
       await onSaved();
@@ -464,6 +465,17 @@ export function ManualIssueEditor({ editing, regions = [], presetTrees, onClose,
             </label>
           )}
           <label>
+            承办人
+            <input
+              type="text"
+              value={assignee}
+              maxLength={20}
+              placeholder="如：毕自严、徐光启、孙承宗"
+              onChange={(e) => setAssignee(e.target.value)}
+            />
+            <small className="manual-issue-hint">留空则责任无着，月末更容易负向推进。</small>
+          </label>
+          <label>
             持续回合数
             <input
               type="number"
@@ -552,11 +564,21 @@ export function SituationTip({ issue, pos }: { issue: Issue; pos: { x: number; y
 
 // 局势目标(goal)只读展示——goal 立项后锁定不可改。
 function IssueGoalView({ issue }: { issue: Issue }) {
-  if (!issue.goal) return null;
+  if (!issue.goal && !issue.assignee) return null;
   return (
     <div className="issue-goal-box">
-      <div className="issue-goal-label">目标</div>
-      <p className="issue-goal-text">{issue.goal}</p>
+      {issue.assignee ? (
+        <>
+          <div className="issue-goal-label">承办</div>
+          <p className="issue-goal-text">{issue.assignee}</p>
+        </>
+      ) : null}
+      {issue.goal ? (
+        <>
+          <div className="issue-goal-label">目标</div>
+          <p className="issue-goal-text">{issue.goal}</p>
+        </>
+      ) : null}
     </div>
   );
 }

@@ -223,6 +223,7 @@ export type Issue = {
   is_manual?: boolean;
   duration_turns?: number;
   goal?: string;
+  assignee?: string;
   origin_turn?: number;
 };
 

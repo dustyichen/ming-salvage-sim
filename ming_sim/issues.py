@@ -1115,10 +1115,79 @@ def _effect_has_entity(effect: Dict[str, object]) -> bool:
     return False
 
 
+def _issue_baseline_delta(row: sqlite3.Row) -> int:
+    """自动兜底用的本月基准推进量；承办人只改百分比，不直接给点数。"""
+    bar = int(row["bar_value"] or 0)
+    inertia = abs(int(row["inertia"] or 0))
+    duration = int((row["duration_turns"] if "duration_turns" in row.keys() else 0) or 0)
+    if inertia > 0:
+        return max(3, min(12, inertia))
+    if duration > 0:
+        return max(3, min(12, round(max(1, 100 - bar) / max(1, duration))))
+    return 6
+
+
+_ASSIGNEE_PCT_BASES = {
+    "ability": 1.6,
+    "loyalty": 0.6,
+    "integrity": 0.5,
+    "courage": 0.4,
+}
+
+
+def _assignee_net_pct(ability: int, loyalty: int, integrity: int, courage: int) -> int:
+    """承办人百分比修正：50 为 0%；同帝国修正一样用带符号 net_pct 套基准增量。"""
+    pct = (
+        (ability - 50) * _ASSIGNEE_PCT_BASES["ability"]
+        + (loyalty - 50) * _ASSIGNEE_PCT_BASES["loyalty"]
+        + (integrity - 50) * _ASSIGNEE_PCT_BASES["integrity"]
+        + (courage - 50) * _ASSIGNEE_PCT_BASES["courage"]
+    )
+    return max(-80, min(80, round(pct)))
+
+
+def _apply_assignee_pct(base_delta: int, net_pct: int) -> int:
+    delta = round(GameDB.apply_legacy_pct(float(base_delta), int(net_pct)))
+    if delta == 0:
+        return 1 if base_delta >= 0 else -1
+    return delta
+
+
+def _assignee_adjusted_issue_delta(db: GameDB, row: sqlite3.Row, base_delta: int) -> tuple[int, str]:
+    """把 extractor 输出视为基准增量，再按承办人属性做机械百分比折算。"""
+    assignee = str((row["assignee"] if "assignee" in row.keys() else "") or "").strip()
+    if not assignee or base_delta == 0:
+        return base_delta, ""
+    ch = db.conn.execute(
+        """
+        SELECT name, status, ability, loyalty, integrity, courage
+        FROM characters WHERE name=?
+        """,
+        (assignee,),
+    ).fetchone()
+    if ch is None:
+        net_pct = -40
+        delta = _apply_assignee_pct(base_delta, net_pct)
+        return delta, f"承办人{assignee}不在名册，基准{base_delta}按承办修正{net_pct}%折算为{delta}。"
+    if str(ch["status"]) != "active":
+        net_pct = -50
+        delta = _apply_assignee_pct(base_delta, net_pct)
+        return delta, f"承办人{assignee}已非在朝，基准{base_delta}按承办修正{net_pct}%折算为{delta}。"
+    net_pct = _assignee_net_pct(
+        int(ch["ability"] or 50),
+        int(ch["loyalty"] or 50),
+        int(ch["integrity"] or 50),
+        int(ch["courage"] or 50),
+    )
+    delta = _apply_assignee_pct(base_delta, net_pct)
+    return delta, f"承办人{assignee}基准{base_delta}按承办修正{net_pct}%折算为{delta}。"
+
+
 def _auto_issue_delta_by_assignee(db: GameDB, row: sqlite3.Row) -> tuple[int, str]:
-    """LLM 漏抽/填 0 时的兜底：issue 不能静止，按承办人状态与自身惯性给轻微变化。"""
+    """LLM 漏抽/填 0 时的兜底：基准进度按帝国修正同款百分比公式折算。"""
     assignee = str((row["assignee"] if "assignee" in row.keys() else "") or "").strip()
     inertia = int(row["inertia"] or 0)
+    base_delta = _issue_baseline_delta(row)
     if assignee:
         ch = db.conn.execute(
             """
@@ -1128,20 +1197,30 @@ def _auto_issue_delta_by_assignee(db: GameDB, row: sqlite3.Row) -> tuple[int, st
             (assignee,),
         ).fetchone()
         if ch is None:
-            return -2, f"承办人{assignee}不在名册，责任无着，本月误期。"
+            net_pct = -40
+            return _apply_assignee_pct(base_delta, net_pct), f"承办人{assignee}不在名册，承办修正{net_pct}%，责任无着，本月误期。"
         if str(ch["status"]) != "active":
-            return -3, f"承办人{assignee}已非在朝，事项无人实办，本月转坏。"
-        score = (
-            int(ch["ability"] or 50) * 0.45
-            + int(ch["loyalty"] or 50) * 0.25
-            + int(ch["integrity"] or 50) * 0.20
-            + int(ch["courage"] or 50) * 0.10
-        )
-        if score >= 72:
-            return 3, f"承办人{assignee}督办得力，按既定目标小有推进。"
-        if score >= 55:
-            return 1, f"承办人{assignee}按部办理，本月略有进展。"
-        return -2, f"承办人{assignee}才具或操守不足，部下推诿，本月受阻。"
+            net_pct = -50
+            return _apply_assignee_pct(base_delta, net_pct), f"承办人{assignee}已非在朝，承办修正{net_pct}%，事项无人实办。"
+        ability = int(ch["ability"] or 50)
+        loyalty = int(ch["loyalty"] or 50)
+        integrity = int(ch["integrity"] or 50)
+        courage = int(ch["courage"] or 50)
+        net_pct = _assignee_net_pct(ability, loyalty, integrity, courage)
+        delta = _apply_assignee_pct(base_delta, net_pct)
+        if net_pct >= 50:
+            tone = "才具卓异，调度有方"
+        elif net_pct >= 25:
+            tone = "能力出众，督办有力"
+        elif net_pct >= 0:
+            tone = "尚能胜任，诸司按令"
+        elif net_pct >= -25:
+            tone = "才具平平，进度打折"
+        elif net_pct >= -50:
+            tone = "能力不足，勉强维持"
+        else:
+            tone = "庸懦误事，部下推诿"
+        return delta, f"承办人{assignee}{tone}，基准{base_delta}按承办修正{net_pct}%折算。"
     if inertia > 0:
         return min(3, max(1, inertia)), "无专责承办，仍循既有势头小幅推进。"
     if inertia < 0:
@@ -1207,12 +1286,19 @@ def apply_issue_tracker_output(
             issue_id = int(adv.get("issue_id"))
         except (TypeError, ValueError):
             continue
-        delta_bar = int(adv.get("delta_bar") or 0)
-        if delta_bar == 0:
+        base_delta_bar = int(adv.get("delta_bar") or 0)
+        if base_delta_bar == 0:
             continue
+        issue_row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+        if issue_row is None or issue_row["status"] != "active":
+            continue
+        delta_bar, assignee_note = _assignee_adjusted_issue_delta(db, issue_row, base_delta_bar)
+        delta_bar = max(-50, min(50, int(delta_bar)))
         inertia_delta = int(adv.get("inertia_delta") or 0)
         stage_text = str(adv.get("stage_text") or "")[:120]
         narrative = compact_log(adv.get("narrative") or "")
+        if assignee_note:
+            narrative = compact_log(f"{narrative}；{assignee_note}" if narrative else assignee_note)
         # 推进推到 100/0 即结案——extractor 在本条推进里同时现填终结效果（含 buildings/departments/
         # technologies 实体段）。issue 立项时自带 effect 的（预设部门/科技局势）用预设为底，现填覆盖；
         # 手动/自建局势立项时 effect 为空，实体全靠这里现填。推进与结案合一，无需 close_issues 再写一遍。
@@ -1267,6 +1353,8 @@ def apply_issue_tracker_output(
             "title": new_row["title"],
             "from_value": int(new_row["bar_value"]) - delta_bar,
             "to_value": int(new_row["bar_value"]),
+            "base_delta_bar": base_delta_bar,
+            "delta_bar": delta_bar,
             "stage_text": new_row["stage_text"],
             "status": new_row["status"],
             "narrative": narrative,

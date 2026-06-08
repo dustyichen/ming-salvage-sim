@@ -479,6 +479,7 @@ class _SchemaMixin:
                 effect_on_fail TEXT NOT NULL DEFAULT '{}',
                 resolve_condition TEXT NOT NULL DEFAULT '',
                 fail_condition TEXT NOT NULL DEFAULT '',
+                assignee TEXT NOT NULL DEFAULT '',
                 resolution_summary TEXT NOT NULL DEFAULT '',
                 last_advance_turn INTEGER NOT NULL DEFAULT 0,
                 closed_turn INTEGER,
@@ -617,6 +618,8 @@ class _SchemaMixin:
         self.ensure_column("issues", "duration_turns", "INTEGER NOT NULL DEFAULT 0")
         # goal：皇帝给该局势定的目标/意图，喂给推演 simulator 据此逐月推进进度（对所有 issue 生效，玩家可改）。
         self.ensure_column("issues", "goal", "TEXT NOT NULL DEFAULT ''")
+        # assignee：局势承办人/主责大臣。推演按其职掌、能力、状态判每月正负推进。
+        self.ensure_column("issues", "assignee", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")

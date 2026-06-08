@@ -639,7 +639,7 @@ def build_board_query_tools(context: CourtContext):
         return (
             f"#{row['id']} {row['title']} bar={int(row['bar_value'])} "
             f"inertia={row['inertia']} kind={row['kind']} cancellable={row['cancellable']}\n"
-            f"阶段：{row['stage_text']}。牵涉：{row['faction_hint'] or '—'}。\n"
+            f"阶段：{row['stage_text']}。承办：{(row['assignee'] if 'assignee' in row.keys() else '') or '—'}。牵涉：{row['faction_hint'] or '—'}。\n"
             f"结案条件：{row['resolve_condition'] or '（未填）'}。"
             f"失败条件：{row['fail_condition'] or '（未填）'}。"
         )
@@ -723,8 +723,12 @@ def build_simulator_tools(context: CourtContext):
         「人事除目」（有人事变动时必列，无则不列）：
           任官：旧职→新职 or 起用姓名为官职  → 档房抽office_changes
           去职：姓名+去职缘由（革/狱/流/仕/卒）  → 档房抽character_status_changes
-        「待办未解」：只列active_issues在册局势，逐条状态短语（已具题待覆/已近结案/按其本然推移等），
-        每条一句话点局势名与id，不写bar数字，不写from→to。
+        「待办未解」：只列active_issues在册局势，逐条写本月正向或负向变化；
+        每条一句话点局势名与id，不写bar数字，不写from→to，不写“暂无变化/仍待观察”。
+        有实旨、人财物、权限、盘面利好则写向解决端推进；无对症行动、钱粮未到、拖延反扑则写向失败端退。
+        带承办人的局势必须写此人本月办得如何；承办人能力影响完成度百分比，不是直接加点：
+        先判本月基准进度，再按承办修正%=(能力-50)*1.6+(忠诚-50)*0.6+(清廉-50)*0.5+(胆略-50)*0.4 折算；
+        与帝国修正同口径：base>=0乘(1+pct/100)，base<0乘(1-pct/100)。无承办人则写责任无着或部院互推。
         「建筑只叙事」：不代标数值、不代立新建筑；新建/扩建走局势effect落地，不在邸报直造。
 
         ══ 输出格式 ══
@@ -784,15 +788,17 @@ def build_extractor_tools(context: CourtContext):
                             如 {"后金":"敌对","蒙古":"摇摆","朝鲜":"倾明"}；无内容填 {}
         issue_advances      既有局势推进列表
                             每项：{issue_id(integer),delta_bar,stage_text,narrative,可选inertia_delta}
-                            delta_bar=皇帝实旨推动量（不含自然漂移inertia，系统自动算）
+                            delta_bar=本月该 issue 的明确变化量，必须非 0（不含自然漂移inertia，系统自动算）
                             档位：极端±40~50、重大±20~35、中等±8~15、轻度±1~5
-                            本月未被实旨推动的填delta_bar:0（靠inertia自然漂）
+                            承办人能力用帝国修正同款百分比：base>=0乘(1+pct/100)，base<0乘(1-pct/100)，不是直接+N
+                            本月未被实旨推动的，也要按拖延/反扑/自然恶化给 -1~-5，
+                            或按已投入资源、既有办理惯性给 +1~+5；禁止填 0
         new_issues          本月新立局势
                             来源(a) origin_kind:"decree"——诏书明文长期工程/改革，需全字段：
                               kind(initiative/situation),title,origin_kind,bar_value(0-100),
                               expected_months(整数),stage_text,resolve_condition,fail_condition,
                               ongoing_effects,effect_on_resolve,effect_on_fail,
-                              cancellable(decree/never/by_progress)
+                              cancellable(decree/never/by_progress),assignee(承办人，可选但建议填在册姓名)
                               effect_on_resolve/fail 可含 metrics/economy/factions/buildings
                               buildings每项：{action:create/modify/remove,...}
                             来源(b) origin_kind:"event_pool"——只两字段：origin_kind+"id"(从candidate_events选)

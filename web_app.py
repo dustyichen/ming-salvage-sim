@@ -987,6 +987,7 @@ class WebGame:
                 "is_manual": bool(row["is_manual"]) if "is_manual" in row.keys() else False,
                 "duration_turns": int(row["duration_turns"] or 0) if "duration_turns" in row.keys() else 0,
                 "goal": (row["goal"] if "goal" in row.keys() else "") or "",
+                "assignee": (row["assignee"] if "assignee" in row.keys() else "") or "",
                 "origin_turn": int(row["origin_turn"] or 0),
             })
         return payloads
@@ -2445,6 +2446,8 @@ class ManualIssueCreateRequest(BaseModel):
     duration_turns: int = 0
     # 目标：皇帝给该局势定的方向意图，喂给推演逐月推进。立项后锁定不可改。
     goal: str = ""
+    # 承办人：主责大臣姓名。推演按其职掌、能力、状态自动推进或恶化。
+    assignee: str = ""
     # 分类（题材），落 tags；与 ISSUE_THEMES 对齐。
     tags: list[str] = []
     # 走满后落成的实体固定字段（玩家填）。组装成 effect_on_resolve 立项即预埋，走满直接落地。
@@ -2455,6 +2458,7 @@ class ManualIssueUpdateRequest(BaseModel):
     # 注意：goal 立项后锁定，不在此可改。
     title: Optional[str] = None
     duration_turns: Optional[int] = None
+    assignee: Optional[str] = None
 
 
 def _build_manual_resolve_effect(entity: "ManualIssueEntity | None", title: str) -> dict:
@@ -2658,6 +2662,7 @@ async def api_create_manual_issue(request: ManualIssueCreateRequest) -> Dict[str
         is_manual=True,
         duration_turns=max(0, int(request.duration_turns or 0)),
         goal=str(request.goal or preset_override.get("goal") or "").strip(),
+        assignee=str(request.assignee or "").strip(),
     )
     print(f"[issue/api] 手动新建局势 id={issue_id} title={title!r} tags={tags} 预埋effect={resolve_effect}")
     return {"id": issue_id, "title": title, "duration_turns": max(0, int(request.duration_turns or 0))}
@@ -2667,7 +2672,7 @@ async def api_create_manual_issue(request: ManualIssueCreateRequest) -> Dict[str
 async def api_update_manual_issue(issue_id: int, request: ManualIssueUpdateRequest) -> Dict[str, Any]:
     """改手动 decree 局势：名称 / 持续回合数。goal 立项后锁定，不可改。"""
     ok = get_game().db.update_manual_issue(
-        issue_id, title=request.title, duration_turns=request.duration_turns
+        issue_id, title=request.title, duration_turns=request.duration_turns, assignee=request.assignee
     )
     if not ok:
         raise HTTPException(status_code=404, detail=f"未找到可改的手动局势 #{issue_id}（仅手动新建且进行中的可改）")

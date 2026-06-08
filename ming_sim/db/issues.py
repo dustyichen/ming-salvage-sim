@@ -122,6 +122,7 @@ class _IssuesMixin:
         is_manual: bool = False,
         duration_turns: int = 0,
         goal: str = "",
+        assignee: str = "",
     ) -> int:
         if kind not in ("situation", "initiative"):
             raise ValueError(f"issue kind 非法：{kind}")
@@ -137,8 +138,8 @@ class _IssuesMixin:
                 phase, stage_text, status, severity, region_hint, faction_hint,
                 tags, ongoing_effects, cancellable, cancel_cost,
                 effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
-                last_advance_turn, is_manual, duration_turns, goal
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                assignee, last_advance_turn, is_manual, duration_turns, goal
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 kind, title, origin_kind, origin_ref, state.turn,
@@ -151,6 +152,7 @@ class _IssuesMixin:
                 json.dumps(effect_on_resolve or {}, ensure_ascii=False),
                 json.dumps(effect_on_fail or {}, ensure_ascii=False),
                 resolve_condition, fail_condition,
+                (assignee or "").strip(),
                 state.turn,
                 1 if is_manual else 0,
                 max(0, int(duration_turns or 0)),
@@ -188,6 +190,7 @@ class _IssuesMixin:
         title: str | None = None,
         duration_turns: int | None = None,
         goal: str | None = None,
+        assignee: str | None = None,
     ) -> bool:
         """改手动局势：名称(title) / 持续回合数(duration_turns) / 目标(goal)。
         仅 is_manual=1 且 active 可改。返回是否实际更新。"""
@@ -206,6 +209,9 @@ class _IssuesMixin:
         if goal is not None:
             sets.append("goal=?")
             params.append(goal.strip())
+        if assignee is not None:
+            sets.append("assignee=?")
+            params.append(assignee.strip())
         if not sets:
             return False
         sets.append("updated_at=CURRENT_TIMESTAMP")

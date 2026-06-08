@@ -461,7 +461,7 @@ def create_season_simulator_agent(
     return Agent(
         name="月末推演日讲官",
         id="season-simulator",
-        model=create_chat_model(cfg, temperature=0.9, top_p=0.95, max_tokens=cfg.max_tokens, enable_thinking=True),
+        model=create_chat_model(cfg, temperature=0.5, top_p=0.95, max_tokens=cfg.max_tokens, enable_thinking=True),
         instructions=instructions,
         add_history_to_context=False,
         markdown=False,
@@ -495,7 +495,7 @@ def create_score_extractor_module_agent(
         model=create_chat_model(
             cfg,
             temperature=0.1,
-            top_p=0.7,
+            top_p=0.1,
             max_tokens=cfg.max_tokens,
             enable_thinking=False,
             force_json_output=True,
