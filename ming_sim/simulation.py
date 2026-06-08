@@ -362,11 +362,18 @@ def build_simulator_payload(
             "title": ev.title,
             "kind": ev.kind,
             "summary": ev.summary,
+            "event_type": ev.event_type,
             "interests": ev.interests,
+            "audiences": ev.audiences,
+            "urgency": int(ev.urgency),
+            "severity": int(ev.severity),
+            "credibility": int(ev.credibility),
             "is_historical": bool(ev.is_historical),
             "resolve_condition": ev.resolve_condition,
             "fail_condition": ev.fail_condition,
             "precondition": ev.precondition,
+            "trigger_gate": ev.trigger_gate,
+            "require": ev.require,
         }
         for ev in gather_candidate_events(state, db)
     ]
