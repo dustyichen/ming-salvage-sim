@@ -20,12 +20,13 @@ class ArmsAndTroopsTests(unittest.TestCase):
         self.tmp.close()
 
     def test_opening_arms_stock_defaults(self):
+        # 总库＝国家战略储备（供拨发），与军队已配持械是两份。
         stock = {item["id"]: item for item in self.db.arms_stock_payload()}
-        self.assertEqual(stock["huochong"]["qty"], 1200)
-        self.assertEqual(stock["niaochong"]["qty"], 300)
-        self.assertEqual(stock["sanyan_chong"]["qty"], 500)
-        self.assertEqual(stock["hudun_pao"]["qty"], 40)
-        self.assertEqual(stock["folangji"]["qty"], 12)
+        self.assertEqual(stock["huochong"]["qty"], 8000)
+        self.assertEqual(stock["niaochong"]["qty"], 2000)
+        self.assertEqual(stock["sanyan_chong"]["qty"], 3000)
+        self.assertEqual(stock["hudun_pao"]["qty"], 200)
+        self.assertEqual(stock["folangji"]["qty"], 60)
         self.assertFalse(stock["suifa_qiang"]["unlocked"])
         self.assertEqual(stock["suifa_qiang"]["qty"], 0)
 
@@ -39,8 +40,8 @@ class ArmsAndTroopsTests(unittest.TestCase):
         self.assertEqual(arms_flows[("huochong", "京营火器局")], 440)
         self.assertEqual(arms_flows[("folangji", "定海卫海防炮台")], 2)
         stock = {item["id"]: item["qty"] for item in self.db.arms_stock_payload()}
-        self.assertEqual(stock["huochong"], 1640)
-        self.assertEqual(stock["folangji"], 14)
+        self.assertEqual(stock["huochong"], 8440)  # 8000 储备 + 440 月产
+        self.assertEqual(stock["folangji"], 62)    # 60 储备 + 2 月产
 
     def test_army_payload_has_composition_and_computed_pay(self):
         army = next(item for item in self.db.army_payload() if item["id"] == "jingying")
@@ -50,15 +51,18 @@ class ArmsAndTroopsTests(unittest.TestCase):
 
     def test_army_held_arms_three_tier(self):
         # 军→兵种→装备：拨给某军某兵种，army_held_arms 返回 {军:{兵种:{武器:件数}}}。
-        self.assertEqual(self.db.army_held_arms_all(), {})  # 开局各军无入库持械
+        # 京营开局已配（火炮队 虎蹲炮120，非正规步兵 火铳15000）——拨发在其上累加。
+        base = self.db.army_held_arms_all()
+        self.assertEqual(base["京营"]["火炮队"]["虎蹲炮"], 120)
+        self.assertEqual(base["京营"]["非正规步兵"]["火铳"], 15000)
         res = self.db.apply_arms_dispatch(self.state, "jingying", "火炮队", "虎蹲炮", 40, "测试")
         self.assertTrue(res["ok"])
         self.assertEqual(res["troop_type"], "火炮队")
         self.db.apply_arms_dispatch(self.state, "jingying", "非正规步兵", "火铳", 1200, "测试")
         held = self.db.army_held_arms_all()
-        self.assertEqual(held["京营"]["火炮队"]["虎蹲炮"], 40)
-        self.assertEqual(held["京营"]["非正规步兵"]["火铳"], 1200)
-        # 装备按兵种分开，不混在一起
+        self.assertEqual(held["京营"]["火炮队"]["虎蹲炮"], 160)      # 120+40
+        self.assertEqual(held["京营"]["非正规步兵"]["火铳"], 16200)  # 15000+1200
+        # 装备按兵种分开：火炮队没有火铳
         self.assertNotIn("火铳", held["京营"]["火炮队"])
 
     def test_dispatch_rejects_absent_troop(self):

@@ -29,7 +29,29 @@
         "非正规步兵": 75000,
         "火炮队": 5000,
         "骑兵": 5000
-      }
+      },
+      "arms": [
+        {
+          "troop_type": "火炮队",
+          "weapon": "虎蹲炮",
+          "qty": 120
+        },
+        {
+          "troop_type": "火炮队",
+          "weapon": "佛郎机",
+          "qty": 60
+        },
+        {
+          "troop_type": "非正规步兵",
+          "weapon": "火铳",
+          "qty": 15000
+        },
+        {
+          "troop_type": "非正规步兵",
+          "weapon": "三眼铳",
+          "qty": 4000
+        }
+      ]
     },
     {
       "id": "guanning",
@@ -54,7 +76,34 @@
         "非正规步兵": 42000,
         "骑兵": 18000,
         "火炮队": 12000
-      }
+      },
+      "arms": [
+        {
+          "troop_type": "火炮队",
+          "weapon": "虎蹲炮",
+          "qty": 150
+        },
+        {
+          "troop_type": "火炮队",
+          "weapon": "佛郎机",
+          "qty": 90
+        },
+        {
+          "troop_type": "火炮队",
+          "weapon": "红夷大炮",
+          "qty": 11
+        },
+        {
+          "troop_type": "非正规步兵",
+          "weapon": "火铳",
+          "qty": 12000
+        },
+        {
+          "troop_type": "非正规步兵",
+          "weapon": "三眼铳",
+          "qty": 3000
+        }
+      ]
     },
     {
       "id": "shanhaiguan",
@@ -78,7 +127,24 @@
       "troop_composition": {
         "非正规步兵": 24000,
         "火炮队": 4000
-      }
+      },
+      "arms": [
+        {
+          "troop_type": "火炮队",
+          "weapon": "虎蹲炮",
+          "qty": 80
+        },
+        {
+          "troop_type": "火炮队",
+          "weapon": "佛郎机",
+          "qty": 40
+        },
+        {
+          "troop_type": "非正规步兵",
+          "weapon": "火铳",
+          "qty": 6000
+        }
+      ]
     },
     {
       "id": "xuan_da",
@@ -102,7 +168,19 @@
       "troop_composition": {
         "非正规步兵": 50000,
         "骑兵": 15000
-      }
+      },
+      "arms": [
+        {
+          "troop_type": "非正规步兵",
+          "weapon": "火铳",
+          "qty": 9000
+        },
+        {
+          "troop_type": "非正规步兵",
+          "weapon": "三眼铳",
+          "qty": 2000
+        }
+      ]
     },
     {
       "id": "jizhen",
@@ -126,7 +204,14 @@
       "troop_composition": {
         "非正规步兵": 41000,
         "骑兵": 11000
-      }
+      },
+      "arms": [
+        {
+          "troop_type": "非正规步兵",
+          "weapon": "火铳",
+          "qty": 8000
+        }
+      ]
     },
     {
       "id": "denglai",
@@ -151,7 +236,24 @@
         "桨帆舰队": 12000,
         "火炮队": 5000,
         "非正规步兵": 9000
-      }
+      },
+      "arms": [
+        {
+          "troop_type": "火炮队",
+          "weapon": "虎蹲炮",
+          "qty": 60
+        },
+        {
+          "troop_type": "火炮队",
+          "weapon": "佛郎机",
+          "qty": 30
+        },
+        {
+          "troop_type": "非正规步兵",
+          "weapon": "火铳",
+          "qty": 1500
+        }
+      ]
     },
     {
       "id": "dongjiang",
@@ -175,7 +277,14 @@
       "troop_composition": {
         "桨帆舰队": 22000,
         "非正规步兵": 8000
-      }
+      },
+      "arms": [
+        {
+          "troop_type": "非正规步兵",
+          "weapon": "火铳",
+          "qty": 1200
+        }
+      ]
     },
     {
       "id": "shaanxi_army",
@@ -199,7 +308,14 @@
       "troop_composition": {
         "非正规步兵": 36000,
         "骑兵": 6000
-      }
+      },
+      "arms": [
+        {
+          "troop_type": "非正规步兵",
+          "weapon": "火铳",
+          "qty": 3000
+        }
+      ]
     },
     {
       "id": "nanjing_garrison",
@@ -223,7 +339,14 @@
       "troop_composition": {
         "非正规步兵": 34000,
         "桨帆舰队": 12000
-      }
+      },
+      "arms": [
+        {
+          "troop_type": "非正规步兵",
+          "weapon": "火铳",
+          "qty": 4000
+        }
+      ]
     },
     {
       "id": "fujian_navy",

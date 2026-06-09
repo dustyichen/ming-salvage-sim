@@ -845,8 +845,39 @@ class _SchemaMixin:
         # 军队软删除标记：撤销（manpower 归 0）的番号置 active=0，盘面/payload/前端读取层过滤掉，
         # 行仍留库可被「收复/重建」事件复活。旧档默认 active=1（满编军不受影响）。
         self.ensure_column("armies", "active", "INTEGER NOT NULL DEFAULT 1")
+        # army_arms 升「军→兵种→装备」三级（主键加 troop_type）。老档主键是 (army_id,weapon_id)，
+        # ensure_column 改不了主键，须重建表：旧持械行 troop_type 置 ''（视为未分兵种，玩家持械不丢）。
+        self._migrate_army_arms_troop_type()
         self.conn.commit()
         self.init_fiscal_config()
+
+    def _migrate_army_arms_troop_type(self) -> None:
+        """army_arms 升三级（军→兵种→装备）：主键从 (army_id,weapon_id) 改成
+        (army_id,troop_type,weapon_id)。老档主键不含 troop_type，ensure_column 改不了主键，
+        须重建表搬数据（旧持械行 troop_type 置 ''＝未分兵种，玩家持械不丢）。已含 troop_type 列则跳过。"""
+        cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(army_arms)").fetchall()}
+        if not cols:
+            return  # 表还没建（新库由 init 的 CREATE TABLE 直接建好三级）
+        if "troop_type" in cols:
+            return  # 已是三级，无需迁移
+        self.conn.executescript(
+            """
+            ALTER TABLE army_arms RENAME TO army_arms_old;
+            CREATE TABLE army_arms (
+                army_id TEXT NOT NULL,
+                troop_type TEXT NOT NULL DEFAULT '',
+                weapon_id TEXT NOT NULL,
+                qty INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(army_id, troop_type, weapon_id),
+                FOREIGN KEY(army_id) REFERENCES armies(id),
+                FOREIGN KEY(weapon_id) REFERENCES weapons(id)
+            );
+            INSERT INTO army_arms (army_id, troop_type, weapon_id, qty, updated_at)
+                SELECT army_id, '', weapon_id, qty, updated_at FROM army_arms_old;
+            DROP TABLE army_arms_old;
+            """
+        )
 
     def _migrate_region_grain_fiscal_fields(self) -> None:
         """旧存档迁移：确保 regions.fiscal 带年度粮食产量与当前存粮字段。"""

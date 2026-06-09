@@ -172,6 +172,7 @@ class Army:
     loyalty: int
     status: str
     owner_power: str
+    arms: list = field(default_factory=list)  # 开局持械 [{troop_type, weapon, qty}]，seed 写 army_arms
 
 
 @dataclass

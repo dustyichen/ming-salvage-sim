@@ -340,6 +340,7 @@ export type BudgetItem = {
   basis?: string;
   basis_total?: number;
   rate_unit?: string;
+  paid_estimate?: number;  // 各军军饷专用：受国库约束的预计实发（< amount 表示发不满、差额转欠饷）
 };
 
 export type BudgetMovement = {

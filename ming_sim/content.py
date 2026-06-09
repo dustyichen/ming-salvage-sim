@@ -221,6 +221,13 @@ def load_army_content() -> Dict[str, Army]:
             loyalty=int_field(item, "loyalty", f"armies.json.armies[{idx}]"),
             status=str_field(item, "status", f"armies.json.armies[{idx}]"),
             owner_power=owner_power,
+            arms=[
+                {"troop_type": str(a.get("troop_type") or ""),
+                 "weapon": str(a.get("weapon") or ""),
+                 "qty": int(a.get("qty") or 0)}
+                for a in (item.get("arms") or [])
+                if str(a.get("weapon") or "") and int(a.get("qty") or 0) > 0
+            ],
         )
     if not armies:
         raise SystemExit("armies.json 必须至少定义一支军队。")

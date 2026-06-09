@@ -42,7 +42,7 @@
       "cost": 1,
       "equip_per_unit": 0.4,
       "requires_tech": "",
-      "opening_stock": 1200
+      "opening_stock": 8000
     },
     {
       "id": "niaochong",
@@ -51,7 +51,7 @@
       "cost": 1,
       "equip_per_unit": 0.5,
       "requires_tech": "",
-      "opening_stock": 300
+      "opening_stock": 2000
     },
     {
       "id": "sanyan_chong",
@@ -60,7 +60,7 @@
       "cost": 1,
       "equip_per_unit": 0.4,
       "requires_tech": "",
-      "opening_stock": 500
+      "opening_stock": 3000
     },
     {
       "id": "suifa_qiang",
@@ -87,7 +87,7 @@
       "cost": 3,
       "equip_per_unit": 1.5,
       "requires_tech": "",
-      "opening_stock": 40
+      "opening_stock": 200
     },
     {
       "id": "folangji",
@@ -96,7 +96,7 @@
       "cost": 4,
       "equip_per_unit": 2.0,
       "requires_tech": "",
-      "opening_stock": 12
+      "opening_stock": 60
     },
     {
       "id": "huopao",

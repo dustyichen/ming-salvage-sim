@@ -236,6 +236,7 @@ class _SeedMixin:
                         army.owner_power,
                     ),
                 )
+            # 开局持械（army_arms）延后到 init_weapons 之后 seed，见 _seed_opening_army_arms。
         if not self.table_has_rows("buildings"):
             for building in self.content.buildings.values():
                 self.conn.execute(
@@ -300,7 +301,32 @@ class _SeedMixin:
         self._migrate_arrears_unit_to_silver(is_fresh_armies_seed)
         self.init_weapons()
         self.init_troop_tiers()
+        if is_fresh_armies_seed:
+            self._seed_opening_army_arms()
         self.conn.commit()
+
+    def _seed_opening_army_arms(self) -> None:
+        """开局把 armies.json 各军的 arms（军→兵种→装备）写进 army_arms。
+        须在 init_weapons 之后（要 weapons 表解析型号 name→id）。只新档 seed 一次。"""
+        for army in self.content.armies.values():
+            for entry in getattr(army, "arms", []) or []:
+                troop = str(entry.get("troop_type") or "")
+                wname = str(entry.get("weapon") or "")
+                qty = int(entry.get("qty") or 0)
+                if not wname or qty <= 0:
+                    continue
+                w = self._ensure_weapon_registered(wname)
+                if w is None:
+                    print(f"[WARN] 开局持械型号无法解析：{wname}（{army.name}）→ 跳过")
+                    continue
+                self.conn.execute(
+                    """
+                    INSERT INTO army_arms (army_id, troop_type, weapon_id, qty) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(army_id, troop_type, weapon_id)
+                      DO UPDATE SET qty=excluded.qty, updated_at=CURRENT_TIMESTAMP
+                    """,
+                    (army.id, troop, str(w["id"]), qty),
+                )
 
     def _migrate_arrears_unit_to_silver(self, is_fresh_armies_seed: bool) -> None:
         """一次性迁移：armies.arrears 从 0-100 抽象分换成累计欠饷万两。
