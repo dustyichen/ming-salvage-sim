@@ -25,6 +25,10 @@ class _ArmsMixin:
         cur = int(cur_raw) if cur_raw is not None and cur_raw.isdigit() else 0
         if cur >= target:
             return
+        existing_total = int((self.conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) AS total FROM arms_stock"
+        ).fetchone() or {"total": 0})["total"])
+        should_seed_opening_stock = existing_total <= 0
         for w in spec.get("weapons", []):
             self.conn.execute(
                 """
@@ -40,10 +44,16 @@ class _ArmsMixin:
                 (w["id"], w["name"], w["tier"], int(w["power"]), int(w["cost"]),
                  float(w["equip_per_unit"]), str(w.get("requires_tech") or "")),
             )
-            # 总库行确保存在（不覆盖已有 qty）
+            # 总库行确保存在；新档写开局库存。旧档若总库全空，则版本迁移时补一次。
+            opening_stock = max(0, int(w.get("opening_stock") or 0))
             self.conn.execute(
-                "INSERT OR IGNORE INTO arms_stock (weapon_id, qty) VALUES (?, 0)", (w["id"],)
+                "INSERT OR IGNORE INTO arms_stock (weapon_id, qty) VALUES (?, ?)", (w["id"], opening_stock)
             )
+            if should_seed_opening_stock and opening_stock > 0:
+                self.conn.execute(
+                    "UPDATE arms_stock SET qty=?, updated_at=CURRENT_TIMESTAMP WHERE weapon_id=? AND qty=0",
+                    (opening_stock, w["id"]),
+                )
         self.kv_set("weapons_version", str(target))
 
     # ── 型号解析 / 解锁判定 ───────────────────────────────────────────

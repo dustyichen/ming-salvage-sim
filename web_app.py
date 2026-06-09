@@ -13,10 +13,12 @@ import os
 import queue
 import random
 import re
+import shutil
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -27,6 +29,8 @@ from pydantic import BaseModel, Field
 
 from ming_sim.constants import ROOT_DIR
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
+from ming_sim import scenario_active
+from ming_sim.content import load_character_content, load_event_content
 from ming_sim.exceptions import ExitGame, LLMUnavailable
 from ming_sim.llm_config import (
     load_llm_config,
@@ -40,7 +44,7 @@ from ming_sim.llm_config import (
 from agno.agent import Agent
 
 from ming_sim.agents import _dump_llm_messages, build_simulator_context
-from ming_sim.llm_model import create_chat_model, extract_agent_text, verify_llm_available
+from ming_sim.llm_model import create_agno_db, create_chat_model, extract_agent_text, verify_llm_available
 from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.issues import _format_issue_ongoing
 from ming_sim.session import GameSession
@@ -428,6 +432,47 @@ def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:
     }
 
 
+def _build_llm_config_from_runtime() -> LLMConfig:
+    """按 runtime_llm.json（优先）+ env 组装 LLMConfig。无 API key 抛 LLMUnavailable。
+    WebGame.__init__ 与剧本生成端点共用，避免重复。"""
+    base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    advanced_model = os.environ.get("OPENAI_ADVANCED_MODEL", "")
+    advanced_base_url = os.environ.get("OPENAI_ADVANCED_BASE_URL", "")
+    advanced_api_key = os.environ.get("OPENAI_ADVANCED_API_KEY", "")
+    thinking_level = os.environ.get("OPENAI_THINKING_LEVEL", "")
+    advanced_thinking_level = os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
+    timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180)
+    # 菜单写的 runtime_llm.json 优先于 env，让「在网页里改的配置」重启后仍生效。
+    runtime = load_runtime_llm()
+    base_url = runtime.get("base_url") or base_url
+    model = runtime.get("model") or model
+    api_key = runtime.get("api_key") or api_key
+    thinking_level = runtime.get("thinking_level") or thinking_level
+    advanced_model = runtime.get("advanced_model") or advanced_model
+    advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
+    advanced_api_key = runtime.get("advanced_api_key") or advanced_api_key
+    advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
+    max_tokens = int(runtime.get("max_tokens") or 8000)
+    timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
+    if not api_key:
+        raise LLMUnavailable("未配 API key，请先到设置页填写。")
+    adv_base = (advanced_base_url or "").strip()
+    return LLMConfig(
+        api_key=api_key,
+        base_url=normalize_openai_base_url(base_url),
+        model=model,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+        thinking_level=normalize_thinking_level(thinking_level),
+        advanced_model=(advanced_model or "").strip(),
+        advanced_base_url=normalize_openai_base_url(adv_base) if adv_base else "",
+        advanced_api_key=(advanced_api_key or "").strip(),
+        advanced_thinking_level=normalize_thinking_level(advanced_thinking_level),
+    )
+
+
 class ChatRequest(BaseModel):
     message: str
 
@@ -469,6 +514,31 @@ class DirectivePatch(BaseModel):
     notes: Optional[str] = None
 
 
+class ScenarioCreateRequest(BaseModel):
+    name: str
+    description: str = ""
+    # 来源：""/"blank"=空白；"__default__"=复制默认（崇祯元年）；其余=复制该剧本 id 的三件套。
+    copy_from: str = ""
+    from_default: bool = False  # 兼容旧字段：True 等价 copy_from="__default__"
+
+
+class ScenarioManifestPatch(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ScenarioFilePut(BaseModel):
+    # 整个文件的 JSON：characters → 对象，events/seed_events → 数组。
+    content: Any
+
+
+class ScenarioGenerateRequest(BaseModel):
+    prompt: str
+    name: str = ""
+    description: str = ""
+    files: Optional[List[str]] = None  # 默认三文件全生成
+
+
 class WebGame:
     """Web 端会话包装：持一个 GameSession + 网页专属态（聊天历史、收藏）。"""
 
@@ -481,47 +551,12 @@ class WebGame:
             db_path = user_data_path("ming_sim.db")
         elif not os.path.isabs(db_path):
             db_path = str(user_data_dir() / db_path)
-        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        advanced_model = os.environ.get("OPENAI_ADVANCED_MODEL", "")
-        advanced_base_url = os.environ.get("OPENAI_ADVANCED_BASE_URL", "")
-        advanced_api_key = os.environ.get("OPENAI_ADVANCED_API_KEY", "")
-        thinking_level = os.environ.get("OPENAI_THINKING_LEVEL", "")
-        advanced_thinking_level = os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
-        timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180)
-        # 菜单写的 runtime_llm.json 优先于 env，让"在网页里改的配置"重启后仍生效。
-        runtime = load_runtime_llm()
-        base_url = runtime.get("base_url") or base_url
-        model = runtime.get("model") or model
-        api_key = runtime.get("api_key") or api_key
-        thinking_level = runtime.get("thinking_level") or thinking_level
-        advanced_model = runtime.get("advanced_model") or advanced_model
-        advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
-        advanced_api_key = runtime.get("advanced_api_key") or advanced_api_key
-        advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
-        max_tokens = int(runtime.get("max_tokens") or 8000)
-        timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
-        if not api_key:
-            raise LLMUnavailable("未配 API key，请先到设置页填写。")
+        llm_config = _build_llm_config_from_runtime()
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self.db_path = db_path
         if fresh:
             _delete_sqlite_db_files_or_raise(db_path)
-        adv_base = (advanced_base_url or "").strip()
-        llm_config = LLMConfig(
-            api_key=api_key,
-            base_url=normalize_openai_base_url(base_url),
-            model=model,
-            max_tokens=max_tokens,
-            timeout_seconds=timeout_seconds,
-            thinking_level=normalize_thinking_level(thinking_level),
-            advanced_model=(advanced_model or "").strip(),
-            advanced_base_url=normalize_openai_base_url(adv_base) if adv_base else "",
-            advanced_api_key=(advanced_api_key or "").strip(),
-            advanced_thinking_level=normalize_thinking_level(advanced_thinking_level),
-        )
         self.session = GameSession(db_path, llm_config)
         self.session.begin_turn()
         # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
@@ -2189,6 +2224,383 @@ def _has_main_db() -> bool:
     return os.path.isfile(db_path)
 
 
+# ---- 自定义剧本（scenarios）----
+
+_SCENARIO_FILES = {
+    "characters": "characters.json",
+    "events": "events.json",
+    "seed_events": "seed_events.json",
+}
+
+
+def _scenario_slug(raw: str) -> str:
+    """剧本 id 净化：仅留字母/数字/中文/._-，拒绝以 . 开头。空则报错。"""
+    cleaned = "".join(c for c in (raw or "").strip() if c.isalnum() or c in "._-")
+    if not cleaned or cleaned.startswith("."):
+        raise HTTPException(status_code=400, detail="剧本名非法（仅允许字母/数字/汉字/._-）。")
+    return cleaned
+
+
+def _scenario_dir(scenario_id: str) -> str:
+    return str(scenario_active.scenarios_root() / scenario_id)
+
+
+def _scenario_files_present(scenario_dir: str) -> Dict[str, bool]:
+    return {
+        key: os.path.isfile(os.path.join(scenario_dir, fname))
+        for key, fname in _SCENARIO_FILES.items()
+    }
+
+
+def _read_manifest(scenario_id: str) -> Dict[str, Any]:
+    scenario_dir = _scenario_dir(scenario_id)
+    path = os.path.join(scenario_dir, "manifest.json")
+    data: Dict[str, Any] = {}
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    data["id"] = scenario_id
+    data.setdefault("name", scenario_id)
+    data.setdefault("description", "")
+    data.setdefault("source", "manual")
+    data["files"] = _scenario_files_present(scenario_dir)  # 以盘上真相为准
+    return data
+
+
+def _write_manifest(scenario_id: str, manifest: Dict[str, Any]) -> Dict[str, Any]:
+    scenario_dir = _scenario_dir(scenario_id)
+    os.makedirs(scenario_dir, exist_ok=True)
+    manifest = dict(manifest)
+    manifest["id"] = scenario_id
+    manifest["files"] = _scenario_files_present(scenario_dir)
+    manifest["updated"] = int(time.time())
+    manifest.setdefault("created", manifest["updated"])
+    with open(os.path.join(scenario_dir, "manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, ensure_ascii=False, indent=1)
+    return manifest
+
+
+def _validate_scenario_dir(scenario_dir: str) -> Optional[str]:
+    """把激活目录临时指向 scenario_dir，跑真 loader 校验（与游戏实际加载字节一致）。
+    返回中文错误串或 None（通过）。只校验目录里实际存在的文件（部分覆盖）。"""
+    with scenario_active.override(scenario_dir):
+        try:
+            if os.path.isfile(os.path.join(scenario_dir, "characters.json")):
+                load_character_content()
+            if os.path.isfile(os.path.join(scenario_dir, "events.json")):
+                load_event_content("events.json")
+            if os.path.isfile(os.path.join(scenario_dir, "seed_events.json")):
+                load_event_content("seed_events.json")
+        except SystemExit as exc:
+            return str(exc)
+    return None
+
+
+def _scan_scenarios() -> List[Dict[str, Any]]:
+    root = scenario_active.scenarios_root()
+    out: List[Dict[str, Any]] = []
+    if not os.path.isdir(root):
+        return out
+    for name in sorted(os.listdir(root)):
+        if name.startswith("."):  # 跳过 .gen-tmp-* 等临时目录
+            continue
+        if not os.path.isdir(os.path.join(root, name)):
+            continue
+        out.append(_read_manifest(name))
+    out.sort(key=lambda m: m.get("updated", 0), reverse=True)
+    return out
+
+
+def _active_scenario_manifest() -> Optional[Dict[str, Any]]:
+    sid = scenario_active.active_scenario_id()
+    if not sid:
+        return None
+    if not os.path.isdir(_scenario_dir(sid)):
+        return None
+    return _read_manifest(sid)
+
+
+@app.get("/api/scenarios")
+async def api_scenarios_list() -> Dict[str, Any]:
+    return {"scenarios": _scan_scenarios(), "active_id": scenario_active.active_scenario_id()}
+
+
+def _read_scenario_full(sid: str) -> Dict[str, Any]:
+    """读一份剧本的完整内容：{manifest, characters, events, seed_events}（缺则 null）。"""
+    scenario_dir = _scenario_dir(sid)
+    out: Dict[str, Any] = {"manifest": _read_manifest(sid)}
+    for key, fname in _SCENARIO_FILES.items():
+        path = os.path.join(scenario_dir, fname)
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    out[key] = json.load(fh)
+            except (OSError, json.JSONDecodeError):
+                out[key] = None
+        else:
+            out[key] = None
+    return out
+
+
+@app.get("/api/scenarios/{scenario_id}")
+async def api_scenario_get(scenario_id: str) -> Dict[str, Any]:
+    sid = _scenario_slug(scenario_id)
+    if not os.path.isdir(_scenario_dir(sid)):
+        raise HTTPException(status_code=404, detail="剧本不存在。")
+    return _read_scenario_full(sid)
+
+
+@app.post("/api/scenarios")
+async def api_scenario_create(request: ScenarioCreateRequest) -> Dict[str, Any]:
+    name = (request.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="剧本名不能为空。")
+    sid = _scenario_slug(f"{name}_{int(time.time())}")
+    scenario_dir = _scenario_dir(sid)
+    if os.path.exists(scenario_dir):
+        raise HTTPException(status_code=409, detail="剧本已存在。")
+    os.makedirs(scenario_dir)
+    # 来源解析：copy_from 优先；兼容旧 from_default。
+    copy_from = (request.copy_from or "").strip()
+    if not copy_from and request.from_default:
+        copy_from = "__default__"
+    if copy_from and copy_from != "blank":
+        if copy_from == "__default__":
+            src_dir = bundled_path("content")
+        else:
+            src_dir = _scenario_dir(_scenario_slug(copy_from))
+            if not os.path.isdir(src_dir):
+                shutil.rmtree(scenario_dir, ignore_errors=True)
+                raise HTTPException(status_code=404, detail="复制来源剧本不存在。")
+        # 直接复制三件套文件（自包含，不走 fallback）。
+        for fname in _SCENARIO_FILES.values():
+            src = os.path.join(src_dir, fname)
+            if os.path.isfile(src):
+                shutil.copyfile(src, os.path.join(scenario_dir, fname))
+    manifest = _write_manifest(sid, {
+        "name": name,
+        "description": (request.description or "").strip(),
+        "source": "manual",
+    })
+    return {"manifest": manifest, "active_id": scenario_active.active_scenario_id()}
+
+
+@app.put("/api/scenarios/{scenario_id}/manifest")
+async def api_scenario_patch_manifest(scenario_id: str, request: ScenarioManifestPatch) -> Dict[str, Any]:
+    sid = _scenario_slug(scenario_id)
+    if not os.path.isdir(_scenario_dir(sid)):
+        raise HTTPException(status_code=404, detail="剧本不存在。")
+    manifest = _read_manifest(sid)
+    if request.name is not None and request.name.strip():
+        manifest["name"] = request.name.strip()
+    if request.description is not None:
+        manifest["description"] = request.description.strip()
+    return {"manifest": _write_manifest(sid, manifest)}
+
+
+@app.put("/api/scenarios/{scenario_id}/{file_key}")
+async def api_scenario_put_file(scenario_id: str, file_key: str, request: ScenarioFilePut) -> Dict[str, Any]:
+    sid = _scenario_slug(scenario_id)
+    fname = _SCENARIO_FILES.get(file_key)
+    if not fname:
+        raise HTTPException(status_code=400, detail="文件类型非法（characters/events/seed_events）。")
+    scenario_dir = _scenario_dir(sid)
+    if not os.path.isdir(scenario_dir):
+        raise HTTPException(status_code=404, detail="剧本不存在。")
+    # 先写临时文件 + 临时目录校验，过了再落正式文件，避免半写坏档。
+    tmp_dir = os.path.join(scenario_dir, f".validate-{uuid.uuid4().hex[:8]}")
+    os.makedirs(tmp_dir)
+    try:
+        with open(os.path.join(tmp_dir, fname), "w", encoding="utf-8") as fh:
+            json.dump(request.content, fh, ensure_ascii=False, indent=1)
+        err = _validate_scenario_dir(tmp_dir)
+        if err:
+            raise HTTPException(status_code=422, detail=f"设定校验未过：{err}")
+        shutil.move(os.path.join(tmp_dir, fname), os.path.join(scenario_dir, fname))
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    return {"manifest": _read_manifest(sid)}
+
+
+@app.delete("/api/scenarios/{scenario_id}")
+async def api_scenario_delete(scenario_id: str) -> Dict[str, Any]:
+    sid = _scenario_slug(scenario_id)
+    scenario_dir = _scenario_dir(sid)
+    if not os.path.isdir(scenario_dir):
+        raise HTTPException(status_code=404, detail="剧本不存在。")
+    if scenario_active.active_scenario_id() == sid:
+        scenario_active.set_active_scenario(None)  # 删的是激活剧本 → 清指针
+    shutil.rmtree(scenario_dir, ignore_errors=True)
+    return {"scenarios": _scan_scenarios(), "active_id": scenario_active.active_scenario_id()}
+
+
+@app.post("/api/scenarios/{scenario_id}/activate")
+async def api_scenario_activate(scenario_id: str) -> Dict[str, Any]:
+    sid = _scenario_slug(scenario_id)
+    scenario_dir = _scenario_dir(sid)
+    if not os.path.isdir(scenario_dir):
+        raise HTTPException(status_code=404, detail="剧本不存在。")
+    err = _validate_scenario_dir(scenario_dir)
+    if err:
+        raise HTTPException(status_code=422, detail=f"剧本校验未过，无法激活：{err}")
+    scenario_active.set_active_scenario(sid)
+    # 仅写指针，不动正在跑的局；下次「开始游戏/继续」时 GameContent.load() 自然拾取。
+    return {"active_id": sid, "scenarios": _scan_scenarios()}
+
+
+@app.post("/api/scenarios/deactivate")
+async def api_scenario_deactivate() -> Dict[str, Any]:
+    scenario_active.set_active_scenario(None)
+    return {"active_id": "", "scenarios": _scan_scenarios()}
+
+
+@app.post("/api/scenarios/generate")
+async def api_scenario_generate(request: ScenarioGenerateRequest) -> Dict[str, Any]:
+    """LLM 生成剧本内容（不落盘），返回供前端编辑。分文件逐个生成。"""
+    prompt = (request.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="请填写剧本构思。")
+    targets = request.files or ["characters", "events", "seed_events"]
+    targets = [t for t in targets if t in _SCENARIO_FILES]
+    if not targets:
+        raise HTTPException(status_code=400, detail="未指定要生成的文件。")
+    try:
+        llm_config = _build_llm_config_from_runtime()
+    except LLMUnavailable as exc:
+        raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+
+    # 生成 agent 需要 content 已 bind（菜单态可能尚无 GameSession）。
+    from ming_sim import agents as _agents
+    from ming_sim.content import GameContent
+    _agents.bind_content(GameContent.load())
+
+    def _run() -> Dict[str, Any]:
+        result: Dict[str, Any] = {"status": {}}
+        for target in targets:
+            try:
+                content = _agents.generate_scenario_file(llm_config, None, target, prompt)
+                result[target] = content
+                result["status"][target] = "generated"
+            except Exception as exc:  # 单文件失败不拖累其它
+                result[target] = None
+                result["status"][target] = f"failed: {exc}"
+        return result
+
+    result = await asyncio.to_thread(_run)
+
+    # 写临时目录跑校验，把警告连同内容一起回（不自动激活、不落正式盘）。
+    tmp_dir = str(scenario_active.scenarios_root() / f".gen-tmp-{uuid.uuid4().hex[:8]}")
+    os.makedirs(tmp_dir, exist_ok=True)
+    try:
+        for target in targets:
+            if result.get(target) is None:
+                continue
+            with open(os.path.join(tmp_dir, _SCENARIO_FILES[target]), "w", encoding="utf-8") as fh:
+                json.dump(result[target], fh, ensure_ascii=False)
+        result["validation"] = _validate_scenario_dir(tmp_dir)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    return result
+
+
+# ---- 剧本对话式编辑（coding-agent 模式）----
+
+def _scenario_editor_agno_db():
+    """剧本编辑会话的 agno 历史库，存 scenarios/.scenario-editor.db。
+    菜单态也可用、跨重启持久；各剧本按 session_id 隔离，共用一个库文件。"""
+    return create_agno_db(str(scenario_active.scenarios_root() / ".scenario-editor.db"))
+
+
+def _scenario_counts_brief(scenario_dir: str) -> str:
+    from ming_sim.scenario_tools import build_scenario_editor_tools
+    tools = {t.__name__: t for t in build_scenario_editor_tools(scenario_dir)}
+    return tools["list_current"]("summary")
+
+
+def _scenario_chat_stream(scenario_id: str, message: str) -> Iterator[Dict[str, Any]]:
+    """剧本编辑对话：流式 yield delta，终态拼 changes + 回读整份剧本 + 软校验。"""
+    sid = _scenario_slug(scenario_id)
+    scenario_dir = _scenario_dir(sid)
+    if not os.path.isdir(scenario_dir):
+        yield {"type": "error", "message": "剧本不存在。"}
+        return
+    text = (message or "").strip()
+    if not text:
+        yield {"type": "error", "message": "请输入指令。"}
+        return
+    try:
+        llm_config = _build_llm_config_from_runtime()
+    except LLMUnavailable as exc:
+        yield {"type": "error", "detail": _llm_error_detail(exc)}
+        return
+
+    from ming_sim import agents as _agents
+    from ming_sim.content import GameContent
+    from ming_sim.scenario_tools import build_scenario_editor_tools, _EDIT_TOOL_NAMES
+    _agents.bind_content(GameContent.load())  # 菜单态可能无 GameSession
+
+    agno_db = _scenario_editor_agno_db()
+    tools = build_scenario_editor_tools(scenario_dir)
+    agent = _agents.create_scenario_editor_agent(llm_config, agno_db, sid, tools)
+    run_input = f"【当前剧本概况】{_scenario_counts_brief(scenario_dir)}\n\n{text}"
+
+    chunks: List[str] = []
+    run_output = None
+    try:
+        stream = agent.run(run_input, stream=True, stream_events=True, yield_run_output=True)
+        for event in stream:
+            content = getattr(event, "content", None)
+            if getattr(event, "event", "") == "RunContent" and content:
+                delta = str(content)
+                chunks.append(delta)
+                yield {"type": "delta", "content": delta}
+            if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
+                run_output = event
+        _dump_llm_messages(run_output, f"剧本编辑/{sid}", agent=agent)
+        reply = "".join(chunks).strip()
+        fail_if_llm_error(reply, "LLM 调用")
+        if not reply and run_output is not None:
+            reply = extract_agent_text(run_output)
+
+        changes: List[Dict[str, str]] = []
+        if run_output is not None:
+            for te in getattr(run_output, "tools", None) or []:
+                tname = getattr(te, "tool_name", "")
+                if tname in _EDIT_TOOL_NAMES:
+                    changes.append({"tool": tname, "result": str(getattr(te, "result", "") or "")})
+
+        yield {"type": "done", "payload": {
+            "reply": reply or "（已处理。）",
+            "changes": changes,
+            "scenario": _read_scenario_full(sid),
+            "validation": _validate_scenario_dir(scenario_dir),
+        }}
+    except LLMUnavailable as exc:
+        yield {"type": "error", "detail": _llm_error_detail(exc)}
+    except Exception as exc:  # noqa: BLE001
+        yield {"type": "error", "message": f"剧本编辑失败：{exc}"}
+
+
+@app.post("/api/scenarios/{scenario_id}/chat/stream")
+async def api_scenario_chat_stream(scenario_id: str, request: ChatRequest) -> StreamingResponse:
+    async def generate() -> AsyncIterator[str]:
+        for item in _scenario_chat_stream(scenario_id, request.message):
+            item_type = str(item.get("type", "message"))
+            if item_type == "delta":
+                yield sse_event("delta", {"content": item.get("content", "")})
+            elif item_type == "done":
+                yield sse_event("done", item.get("payload", {}))
+            elif item_type == "error":
+                yield sse_event("error", item.get("detail") or {"message": item.get("message", "未知错误")})
+            await asyncio.sleep(0)
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
 @app.get("/api/menu/status")
 async def api_menu_status() -> Dict[str, Any]:
     """菜单页状态：API key 是否配好、上次主 DB 是否存在、存档列表。"""
@@ -2202,6 +2614,7 @@ async def api_menu_status() -> Dict[str, Any]:
         "campaigns": _scan_campaigns(),
         "current_campaign": _main_db_campaign_id(),
         "game_settings": load_runtime_game(),
+        "active_scenario": _active_scenario_manifest(),
         "llm": {
             "base_url": runtime.get("base_url") or os.environ.get("OPENAI_BASE_URL", ""),
             "model": runtime.get("model") or os.environ.get("OPENAI_MODEL", ""),
@@ -2231,6 +2644,8 @@ async def api_menu_new_game() -> Dict[str, Any]:
         web_game = WebGame(fresh=True)
     except LLMUnavailable as exc:
         raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+    except SystemExit as exc:
+        raise HTTPException(status_code=500, detail=f"当前剧本文件损坏：{exc}，请到自定义剧本修正或停用。")
     return steam_events.with_events(
         {"state": web_game.state_payload()},
         [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
@@ -2247,6 +2662,8 @@ async def api_menu_continue() -> Dict[str, Any]:
         web_game = WebGame(fresh=False)
     except LLMUnavailable as exc:
         raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+    except SystemExit as exc:
+        raise HTTPException(status_code=500, detail=f"当前剧本文件损坏：{exc}，请到自定义剧本修正或停用。")
     return {"state": web_game.state_payload()}
 
 
@@ -2258,6 +2675,8 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
         web_game = WebGame(fresh=False)  # 先有 session 才能 load_save
     except LLMUnavailable as exc:
         raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+    except SystemExit as exc:
+        raise HTTPException(status_code=500, detail=f"当前剧本文件损坏：{exc}，请到自定义剧本修正或停用。")
     web_game.load_save(name)
     return {"state": web_game.state_payload()}
 

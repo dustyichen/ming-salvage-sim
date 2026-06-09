@@ -18,8 +18,24 @@ def wrap(text: str) -> str:
     return "\n".join(textwrap.wrap(text, width=WRAP, replace_whitespace=False))
 
 
+def _resolve_asset_path(relative_path: str) -> str:
+    """解析设定文件实际路径：激活剧本里有该文件就用它，否则回退默认 content/。
+
+    延迟导入 scenario_active 保持本叶子模块干净、避免导入环。覆盖只做路径解析，
+    loader 对「存在但损坏」的文件照样 SystemExit（不破坏「无 fallback」）。
+    """
+    from ming_sim.scenario_active import active_scenario_dir
+
+    base = active_scenario_dir()
+    if base:
+        candidate = os.path.join(base, relative_path)
+        if os.path.isfile(candidate):
+            return candidate
+    return os.path.join(CONTENT_DIR, relative_path)
+
+
 def load_text_asset(relative_path: str) -> str:
-    path = os.path.join(CONTENT_DIR, relative_path)
+    path = _resolve_asset_path(relative_path)
     try:
         with open(path, "r", encoding="utf-8") as file:
             text = file.read().strip()
@@ -29,7 +45,7 @@ def load_text_asset(relative_path: str) -> str:
 
 
 def load_json_asset(relative_path: str) -> object:
-    path = os.path.join(CONTENT_DIR, relative_path)
+    path = _resolve_asset_path(relative_path)
     try:
         with open(path, "r", encoding="utf-8") as file:
             return json.load(file)

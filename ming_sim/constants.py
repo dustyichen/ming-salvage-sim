@@ -33,7 +33,7 @@ FISCAL_QUANTITY_FIELDS = (
 )
 ARMY_SCORE_FIELDS = ("supply", "morale", "training", "equipment", "arrears", "mobility", "loyalty")
 ARMY_QUANTITY_FIELDS = ("manpower", "maintenance_per_turn")
-ARMY_TEXT_FIELDS = ("name", "station", "commander", "controller", "troop_type", "status", "owner_power")
+ARMY_TEXT_FIELDS = ("name", "station", "commander", "controller", "troop_type", "troop_composition", "status", "owner_power")
 BUILDING_CATEGORIES = ("财政", "军事", "民生", "科技", "交通", "内廷")
 BUILDING_OUTPUT_METRICS = ("国库", "内库", "民心", "皇威", "")
 BUILDING_SCORE_FIELDS = ("condition", "risk")
@@ -137,6 +137,7 @@ ARMY_FIELD_LABELS = {
     "commander": "统帅",
     "controller": "主管",
     "troop_type": "兵种",
+    "troop_composition": "编制",
     "manpower": "人数",
     "maintenance_per_turn": "维护费",
     "supply": "补给",
@@ -224,6 +225,7 @@ ARMY_FIELD_ALIASES = {
     "主管": "controller",
     "管辖": "controller",
     "兵种": "troop_type",
+    "编制": "troop_composition",
     "人数": "manpower",
     "兵力": "manpower",
     "维护费": "maintenance_per_turn",

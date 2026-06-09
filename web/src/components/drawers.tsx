@@ -458,6 +458,52 @@ export function ArmyDrawer({
   const mingArmies = armies.filter((a) => (a.owner_power || "ming") === "ming");
   const filtered = q ? mingArmies.filter((a) => a.name.includes(q) || a.station.includes(q) || a.commander.includes(q)) : mingArmies;
   const selected = mingArmies.find((a) => a.id === selectedArmyId) || null;
+  const visibleStock = (armsStock || []).filter((w) => w.unlocked && w.qty > 0);
+  const troopEntries = (army: Army) => Object.entries(army.troop_composition || {}).filter(([, amount]) => Number(amount) > 0);
+  const troopCompositionText = (army: Army) => {
+    const comp = army.troop_composition || {};
+    const parts = Object.entries(comp).filter(([, amount]) => Number(amount) > 0);
+    if (!parts.length) return army.troop_type || "—";
+    return parts.map(([name, amount]) => `${name}${amount}`).join("、");
+  };
+  const troopRate = (name: string) => {
+    if (/炮|火器|铳|佛郎机/.test(name)) return 0.2;
+    if (/骑|八旗|巴牙喇|披甲|马/.test(name)) return 0.16;
+    if (/水|船|岛|海防|操江/.test(name)) return 0.13;
+    if (/边军|关隘|守军|卫所|镇/.test(name)) return 0.12;
+    return 0.08;
+  };
+  const troopMonthlyPay = (name: string, amount: number) => troopRate(name) * amount / 1000;
+  const formatWan = (value: number) => {
+    return value.toFixed(2);
+  };
+  const troopPayTotal = (army: Army) => {
+    const entries = troopEntries(army);
+    if (!entries.length) return 0;
+    return entries.reduce((sum, [name, amount]) => sum + troopMonthlyPay(String(name), Number(amount)), 0);
+  };
+  const defaultTroopEquipment = (name: string) => {
+    if (/炮船/.test(name)) return "炮船、佛郎机、虎蹲炮、鸟铳";
+    if (/炮|火器|铳|佛郎机/.test(name)) return "火铳、三眼铳、虎蹲炮、药弹";
+    if (/骑|八旗|巴牙喇|披甲|马/.test(name)) return "战马、弓刀、长枪、棉甲";
+    if (/水|船|岛|海防|操江/.test(name)) return "战船、鸟铳、弓刀、火器";
+    if (/边军|关隘|守军|卫所|镇/.test(name)) return "长枪、腰刀、弓弩、火铳";
+    if (/弓/.test(name)) return "弓弩、腰刀、藤牌";
+    if (/土兵|山地/.test(name)) return "藤牌、短刀、弓弩、长矛";
+    return "长枪、腰刀、藤牌、弓弩";
+  };
+  const issuedEquipmentText = (army: Army) => {
+    return army.arms && army.arms.length > 0
+      ? `；兵部加配${army.arms.map((w) => `${w.name}×${w.qty}`).join("、")}`
+      : "";
+  };
+  const armyEquipmentSummary = (army: Army) => {
+    const entries = troopEntries(army);
+    const defaults = entries.length
+      ? entries.map(([name]) => `${name}:${defaultTroopEquipment(String(name))}`).join("；")
+      : defaultTroopEquipment(army.troop_type || "");
+    return `${defaults}${issuedEquipmentText(army)}；装备评分${army.equipment}`;
+  };
   const arrearsTone = (army: Army) => {
     const maint = army.maintenance_per_turn || 1;
     const months = army.arrears / maint;
@@ -470,18 +516,15 @@ export function ArmyDrawer({
       <div className="right-drawer-search">
         <input className="right-drawer-search-input" placeholder="搜索番号/驻地/统帅…" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
-      {armsStock && armsStock.some((w) => w.qty > 0) && (
-        <div className="arms-stock-panel">
-          <div className="arms-stock-title">军备总库</div>
-          <div className="arms-stock-list">
-            {armsStock.filter((w) => w.qty > 0).map((w) => (
-              <span key={w.id} className="arms-stock-chip" title={w.tier}>
-                {w.name}<b>{w.qty}</b>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+      <div className="arms-stock-tags" aria-label="兵部军备库存标签">
+        {visibleStock.length ? visibleStock.map((w) => (
+          <span key={w.id} className="arms-stock-tag" title={`${w.tier} · 库存 ${w.qty}`}>
+            {w.name}<b>{w.qty}</b>
+          </span>
+        )) : (
+          <span className="arms-stock-tag empty">军备总库空</span>
+        )}
+      </div>
       <div className="right-drawer-list">
         {filtered.map((army) => (
           <button
@@ -497,34 +540,57 @@ export function ArmyDrawer({
         ))}
         {!filtered.length && <div className="empty-note">{q ? "无匹配结果。" : "暂无大明军队记录。"}</div>}
       </div>
-      {selected && (
-        <div className="right-drawer-detail">
-          <div className="right-drawer-detail-title">
-            {selected.name}
-            <button className="right-drawer-detail-close" onClick={() => onSelectArmy("")} aria-label="关闭详情"><X size={14} /></button>
+      {selected && createPortal(
+        <section className="army-detail-modal-layer" role="dialog" aria-modal="true" aria-label={`${selected.name}军队详情`}>
+          <div className="army-detail-modal-scrim" onClick={() => onSelectArmy("")} />
+          <div className="army-detail-modal">
+            <header className="army-detail-modal-header">
+              <div>
+                <h2>{selected.name}</h2>
+                <span>{selected.station} · {selected.theater}</span>
+              </div>
+              <button className="region-modal-close" onClick={() => onSelectArmy("")} aria-label="关闭详情"><X size={18} /></button>
+            </header>
+            <div className="army-detail-modal-body">
+              <table className="intel-table army-detail-table">
+                <tbody>
+                  <tr><th>统帅</th><td>{selected.commander || "—"}</td><th>主管</th><td>{selected.controller || "—"}</td></tr>
+                  <tr><th>兵种</th><td colSpan={3}>{selected.troop_type}</td></tr>
+                  <tr><th>编制</th><td colSpan={3}>{troopCompositionText(selected)}</td></tr>
+                  <tr><th>兵力</th><td>{selected.manpower}</td><th>月饷</th><td>{selected.maintenance_per_turn}万两（分项{formatWan(troopPayTotal(selected))}）</td></tr>
+                  <tr><th>军械</th><td>{selected.equipment}</td><th>补给</th><td>{selected.supply}</td></tr>
+                  <tr><th>士气</th><td>{selected.morale}</td><th>操练</th><td>{selected.training}</td></tr>
+                  <tr><th>机动</th><td>{selected.mobility}</td><th>忠诚</th><td>{selected.loyalty}</td></tr>
+                  <tr><th>欠饷</th><td colSpan={3}>{selected.arrears > 0 ? `${selected.arrears}万两（≈${(selected.arrears / (selected.maintenance_per_turn || 1)).toFixed(1)}月）` : "无欠饷"}</td></tr>
+                  <tr><th>持械</th><td colSpan={3}>{armyEquipmentSummary(selected)}</td></tr>
+                  <tr><th>状态</th><td colSpan={3}>{selected.status}</td></tr>
+                </tbody>
+              </table>
+              <table className="intel-table army-troop-table">
+                <thead>
+                  <tr><th>兵种</th><th>人数</th><th>单价</th><th>月饷</th><th>装备</th></tr>
+                </thead>
+                <tbody>
+                  {(troopEntries(selected).length ? troopEntries(selected) : [[selected.troop_type || "未分兵种", selected.manpower]]).map(([name, amount]) => {
+                    const troopName = String(name);
+                    const rate = troopRate(troopName);
+                    const monthlyPay = troopMonthlyPay(troopName, Number(amount));
+                    return (
+                      <tr key={troopName}>
+                        <td>{name}</td>
+                        <td>{Number(amount)}</td>
+                        <td>{rate.toFixed(2)}万/千人</td>
+                        <td>{formatWan(monthlyPay)}万两</td>
+                        <td>{defaultTroopEquipment(troopName)}；评分{selected.equipment}{issuedEquipmentText(selected)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <table className="intel-table">
-            <tbody>
-              <tr><th>驻地</th><td>{selected.station}</td><th>战区</th><td>{selected.theater}</td></tr>
-              <tr><th>统帅</th><td>{selected.commander || "—"}</td><th>兵种</th><td>{selected.troop_type}</td></tr>
-              <tr><th>兵力</th><td>{selected.manpower}</td><th>月饷</th><td>{selected.maintenance_per_turn}万</td></tr>
-              <tr><th>士气</th><td>{selected.morale}</td><th>操练</th><td>{selected.training}</td></tr>
-              <tr><th>军械</th><td>{selected.equipment}</td><th>补给</th><td>{selected.supply}</td></tr>
-              <tr><th>机动</th><td>{selected.mobility}</td><th>忠诚</th><td>{selected.loyalty}</td></tr>
-              <tr><th>欠饷</th><td colSpan={3}>
-                {selected.arrears > 0
-                  ? `${selected.arrears}万两（≈${(selected.arrears / (selected.maintenance_per_turn || 1)).toFixed(1)}月）`
-                  : "无欠饷"}
-              </td></tr>
-              <tr><th>持械</th><td colSpan={3}>
-                {selected.arms && selected.arms.length > 0
-                  ? selected.arms.map((w) => `${w.name}×${w.qty}`).join("、")
-                  : "无配发军械"}
-              </td></tr>
-              <tr><th>状态</th><td colSpan={3}>{selected.status}</td></tr>
-            </tbody>
-          </table>
-        </div>
+        </section>,
+        document.body
       )}
     </RightDrawer>
   );

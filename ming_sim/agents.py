@@ -363,7 +363,7 @@ _TSV_COL_LABELS: Dict[str, Dict[str, str]] = {
     },
     "armies": {
         "name": "军队", "station": "驻地", "theater": "战区", "commander": "统帅",
-        "controller": "主管", "troop_type": "兵种", "manpower": "兵力",
+        "controller": "主管", "troop_type": "兵种", "troop_composition": "编制", "manpower": "兵力",
         "maintenance_per_turn": "月费", "supply": "补给", "morale": "士气",
         "training": "训练", "equipment": "装备", "arrears": "欠饷",
         "mobility": "机动", "loyalty": "忠诚", "status": "状态", "owner_power": "归属",
@@ -655,5 +655,99 @@ def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
         ),
         instructions=[ctx.game_world_prompt, ctx.ending_summary_prompt],
         add_history_to_context=False,
+        markdown=False,
+    )
+
+
+# --- 自定义剧本生成 ---
+
+_SCENARIO_GEN_PROMPT_ATTR = {
+    "characters": "scenario_gen_characters_prompt",
+    "events": "scenario_gen_events_prompt",
+    "seed_events": "scenario_gen_seed_events_prompt",
+}
+
+
+def create_scenario_generator_agent(llm_config: LLMConfig, agno_db: SqliteDb, target: str) -> Agent:
+    """剧本生成员：按玩家构思生成某一个设定文件（characters/events/seed_events）的内容。
+    target 决定用哪份生成提示词。走 advanced 角色（长结构化生成）。一次性，不持久化。"""
+    del agno_db
+    attr = _SCENARIO_GEN_PROMPT_ATTR.get(target)
+    if not attr:
+        raise RuntimeError(f"未知剧本生成目标：{target}")
+    ctx = _ctx()
+    prompt = getattr(ctx, attr)
+    cfg = _llm_for_role(llm_config, "simulator")
+    tlog(f"[scenario-gen/{target}] 使用模型 {cfg.model}")
+    return Agent(
+        name=f"剧本生成员-{target}",
+        id=f"scenario-generator-{target}",
+        model=create_chat_model(
+            cfg,
+            temperature=0.4,
+            top_p=0.6,
+            max_tokens=max(8000, cfg.max_tokens),
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=[ctx.game_world_prompt, prompt],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def generate_scenario_file(
+    llm_config: LLMConfig,
+    agno_db: SqliteDb,
+    target: str,
+    user_prompt: str,
+) -> object:
+    """生成一个设定文件的内容并返回其 JSON（characters → dict，events/seed_events → list）。
+
+    复用结算同款 parse + sanitizer 兜底；agent 按提示词包一层 {"file": <内容>} 满足
+    parse_agent_json 顶层须 object（事件是数组），此处拆封返回内层内容。
+    解析彻底失败抛 LLMContractError，由调用方决定降级（标该文件 failed）。"""
+    agent = create_scenario_generator_agent(llm_config, agno_db, target)
+    raw = run_agent_text(agent, user_prompt, tag=f"scenario-gen/{target}")
+    try:
+        parsed = parse_agent_json(raw, f"剧本生成-{target}")
+    except Exception as parse_err:
+        tlog(f"[scenario-gen/{target}] 主输出解析失败：{parse_err}；调 sanitizer 重整")
+        sanitizer = create_json_sanitizer_agent(llm_config, agno_db)
+        cleaned = run_agent_text(sanitizer, raw, tag=f"scenario-gen/{target}/sanitize")
+        parsed = parse_agent_json(cleaned, f"剧本生成-{target}（sanitizer）")
+    if not isinstance(parsed, dict) or "file" not in parsed:
+        raise LLMContractError(f"剧本生成-{target}：输出缺顶层 file 键。")
+    return parsed["file"]
+
+
+def create_scenario_editor_agent(
+    llm_config: LLMConfig,
+    agno_db: SqliteDb,
+    scenario_id: str,
+    tools: list,
+) -> Agent:
+    """剧本编辑助手：多轮对话 + tool-calling 增删改剧本。走 advanced 角色。
+    带持久 agno 历史（session_id 按剧本隔离），跨请求/重启续上下文。非 JSON-only。"""
+    ctx = _ctx()
+    cfg = _llm_for_role(llm_config, "simulator")
+    tlog(f"[scenario-editor/{scenario_id}] 使用模型 {cfg.model}")
+    return Agent(
+        name="剧本编辑助手",
+        id="scenario-editor",
+        session_id=f"scenario-editor-{scenario_id}",
+        db=agno_db,
+        model=create_chat_model(
+            cfg,
+            temperature=0.3,
+            top_p=0.5,
+            max_tokens=max(4000, cfg.max_tokens),
+            enable_thinking=False,
+        ),
+        instructions=[ctx.game_world_prompt, ctx.scenario_editor_prompt],
+        tools=tools,
+        add_history_to_context=True,
+        num_history_runs=8,
+        tool_call_limit=12,
         markdown=False,
     )

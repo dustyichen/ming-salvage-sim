@@ -30,6 +30,43 @@ from ming_sim.db._helpers import (
 
 
 class _ArmiesMixin:
+    def _army_troop_composition(self, row: sqlite3.Row | Dict[str, object]) -> Dict[str, int]:
+        raw = row["troop_composition"] if "troop_composition" in row.keys() else "{}"  # type: ignore[attr-defined]
+        try:
+            data = json.loads(str(raw or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            data = {}
+        if isinstance(data, dict):
+            out: Dict[str, int] = {}
+            for key, value in data.items():
+                troop = str(key).strip()
+                try:
+                    amount = int(value)
+                except (TypeError, ValueError):
+                    amount = 0
+                if troop and amount > 0:
+                    out[troop] = amount
+            if out:
+                return out
+        troop_type = str(row["troop_type"] or "")
+        manpower = int(row["manpower"] or 0)
+        return {troop_type: manpower} if troop_type and manpower > 0 else {}
+
+    def _composition_text(self, composition: Dict[str, int]) -> str:
+        return "、".join(k for k, v in composition.items() if int(v) > 0)
+
+    def _apply_composition_delta(self, composition: Dict[str, int], troop_type: str, delta: int) -> Dict[str, int]:
+        troop = str(troop_type or "").strip()
+        if not troop:
+            troop = next(iter(composition), "步卒")
+        new_comp = dict(composition)
+        new_amount = max(0, int(new_comp.get(troop, 0)) + int(delta))
+        if new_amount:
+            new_comp[troop] = new_amount
+        else:
+            new_comp.pop(troop, None)
+        return new_comp
+
     def army_rows(self, limit: int | None = None, danger_order: bool = False) -> List[sqlite3.Row]:
         # arrears 是累计欠饷万两，须按 maintenance 归一成"欠饷月数*10"再加权（0-100 量级）
         # CASE 兼容 SQLite（无标量 MIN/LEAST）：maintenance=0 视为 0；归一后截至 100。
@@ -60,6 +97,7 @@ class _ArmiesMixin:
     def army_payload(self, limit: int | None = None, danger_order: bool = False) -> List[Dict[str, object]]:
         payload: List[Dict[str, object]] = []
         for row in self.army_rows(limit=limit, danger_order=danger_order):
+            composition = self._army_troop_composition(row)
             payload.append(
                 {
                     "id": row["id"],
@@ -69,6 +107,7 @@ class _ArmiesMixin:
                     "commander": row["commander"],
                     "controller": row["controller"],
                     "troop_type": row["troop_type"],
+                    "troop_composition": composition,
                     "manpower": int(row["manpower"]),
                     "maintenance_per_turn": int(row["maintenance_per_turn"]),
                     "supply": int(row["supply"]),
@@ -272,9 +311,11 @@ class _ArmiesMixin:
                 except (TypeError, ValueError):
                     mp_delta = 0
                 if mp_delta:
-                    derived = self.content.troop_maintenance_delta(str(row["troop_type"] or ""), mp_delta)
+                    troop_hint = str(norm_changes.get("troop_type") or row["troop_type"] or "")
+                    derived = self.content.troop_maintenance_delta(troop_hint, mp_delta)
                     if derived:
                         raw_changes = {**raw_changes, "maintenance_per_turn": derived}
+            composition = self._army_troop_composition(row)
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field == "reason":
@@ -313,6 +354,8 @@ class _ArmiesMixin:
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
                         continue
+                    troop_hint = str(norm_changes.get("troop_type") or row["troop_type"] or "")
+                    composition = self._apply_composition_delta(composition, troop_hint, actual_delta)
                     stored_new = new_value
                     log_delta = actual_delta
                 elif field == "maintenance_per_turn":
@@ -324,6 +367,47 @@ class _ArmiesMixin:
                     stored_new = new_value
                     log_delta = actual_delta
                 elif field in ARMY_TEXT_FIELDS:
+                    if field == "troop_composition":
+                        old_comp = self._army_troop_composition(row)
+                        next_comp: Dict[str, int] = {}
+                        if isinstance(value, dict):
+                            for k, v in value.items():
+                                try:
+                                    amount = int(v)
+                                except (TypeError, ValueError):
+                                    amount = 0
+                                troop = str(k).strip()
+                                if troop and amount > 0:
+                                    next_comp[troop] = amount
+                        if not next_comp or next_comp == old_comp:
+                            continue
+                        new_manpower = sum(next_comp.values())
+                        new_maintenance = self.content.troop_maintenance_total(next_comp) if str(row["owner_power"]) == "ming" else int(row["maintenance_per_turn"])
+                        new_troop_type = self._composition_text(next_comp)
+                        old_text = json.dumps(old_comp, ensure_ascii=False)
+                        new_text = json.dumps(next_comp, ensure_ascii=False)
+                        self.conn.execute(
+                            "UPDATE armies SET troop_composition=?, troop_type=?, manpower=?, maintenance_per_turn=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                            (new_text, new_troop_type, new_manpower, new_maintenance, army_id),
+                        )
+                        self.conn.execute(
+                            """
+                            INSERT INTO army_logs
+                            (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                            """,
+                            (state.turn, state.year, state.period, army_id, field, old_text, new_text, reason, event.id, edict_id, actor),
+                        )
+                        changes.append({
+                            "army": row["name"],
+                            "field": field,
+                            "label": ARMY_FIELD_LABELS.get(field, field),
+                            "old": old_comp,
+                            "new": next_comp,
+                            "delta": None,
+                            "reason": reason,
+                        })
+                        continue
                     text_value = str(value).strip()[:160]
                     if field == "owner_power":
                         text_value = _normalize_power_id(self.conn, text_value)
@@ -342,6 +426,11 @@ class _ArmiesMixin:
                     f"UPDATE armies SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (stored_new, army_id),
                 )
+                if field == "manpower":
+                    self.conn.execute(
+                        "UPDATE armies SET troop_composition=?, troop_type=? WHERE id=?",
+                        (json.dumps(composition, ensure_ascii=False), self._composition_text(composition), army_id),
+                    )
                 self.conn.execute(
                     """
                     INSERT INTO army_logs
@@ -530,10 +619,27 @@ class _ArmiesMixin:
             # 必填字段
             try:
                 manpower = int(item["manpower"])
-                maintenance = int(item["maintenance_per_turn"])
             except (KeyError, TypeError, ValueError):
-                print(f"[WARN] new_armies '{aid}' 缺 manpower/maintenance_per_turn → 跳过")
+                print(f"[WARN] new_armies '{aid}' 缺 manpower → 跳过")
                 continue
+            troop_composition: Dict[str, int] = {}
+            raw_comp = item.get("troop_composition")
+            if isinstance(raw_comp, dict):
+                for k, v in raw_comp.items():
+                    try:
+                        amount = int(v)
+                    except (TypeError, ValueError):
+                        amount = 0
+                    troop = str(k).strip()
+                    if troop and amount > 0:
+                        troop_composition[troop] = amount
+            if not troop_composition:
+                troop_type_seed = str(item.get("troop_type") or "").strip()
+                if troop_type_seed and manpower > 0:
+                    troop_composition = {troop_type_seed: manpower}
+            if troop_composition:
+                manpower = sum(troop_composition.values())
+            maintenance = self.content.troop_maintenance_total(troop_composition) if owner == "ming" else int(item.get("maintenance_per_turn") or 0)
             def _score(field: str, default: int = 50) -> int:
                 try:
                     return max(0, min(100, int(item.get(field, default))))
@@ -553,7 +659,8 @@ class _ArmiesMixin:
                 str(item.get("theater") or ""),
                 commander,
                 str(item.get("controller") or commander),
-                str(item.get("troop_type") or ""),
+                self._composition_text(troop_composition) or str(item.get("troop_type") or ""),
+                json.dumps(troop_composition, ensure_ascii=False),
                 max(0, manpower),
                 max(0, maintenance),
                 _score("supply"),
@@ -570,10 +677,10 @@ class _ArmiesMixin:
                 self.conn.execute(
                     """
                     INSERT INTO armies
-                    (id, name, station, theater, commander, controller, troop_type, manpower,
+                    (id, name, station, theater, commander, controller, troop_type, troop_composition, manpower,
                      maintenance_per_turn, supply, morale, training, equipment, arrears,
                      mobility, loyalty, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     row,
                 )

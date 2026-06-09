@@ -160,6 +160,7 @@ class Army:
     commander: str
     controller: str
     troop_type: str
+    troop_composition: dict
     manpower: int
     maintenance_per_turn: int
     supply: int

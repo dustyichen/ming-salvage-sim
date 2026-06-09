@@ -52,50 +52,62 @@ class _SeedMixin:
                 )
         self.init_office_grants()
 
-        if not self.table_has_rows("characters"):
-            for character in self.content.characters.values():
-                office = normalize_office(character.office)
-                office_type = infer_office_type_from_office(office, character.office_type)
-                self.conn.execute(
-                    """
-                    INSERT INTO characters
-                    (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style,
-                     diplomacy, martial, stewardship, intrigue, learning,
-                     birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-                     status, status_reason, status_changed_turn, portrait_id, power_id, location, summary)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        character.name,
-                        office,
-                        office_type,
-                        character.faction,
-                        json.dumps(character.aliases, ensure_ascii=False),
-                        json.dumps(character.personal_skills, ensure_ascii=False),
-                        character.loyalty,
-                        character.ability,
-                        character.integrity,
-                        character.courage,
-                        character.style,
-                        character.diplomacy,
-                        character.martial,
-                        character.stewardship,
-                        character.intrigue,
-                        character.learning,
-                        character.birth_year,
-                        character.historical_death_year,
-                        character.historical_death_month,
-                        character.debut_year,
-                        character.debut_month,
-                        character.status,
-                        "",
-                        0,
-                        character.portrait_id,
-                        character.power_id,
-                        character.location,
-                        character.summary,
-                    ),
-                )
+        # 人物：逐人查重补缺（不再全表 table_has_rows 守卫）。
+        # 老档已有的人物一律不动（玩家运行时改过的数据神圣不动）；只插 DB 里没有的。
+        # 这样激活自定义剧本后「继续」老档，剧本新增人物会补进来，原有人物不被覆盖。
+        # 新档（characters 表为空）退化为全量插入，行为与原来一致。
+        new_character_names: List[str] = []
+        for character in self.content.characters.values():
+            exists = self.conn.execute(
+                "SELECT 1 FROM characters WHERE name = ?", (character.name,)
+            ).fetchone()
+            if exists:
+                continue
+            office = normalize_office(character.office)
+            office_type = infer_office_type_from_office(office, character.office_type)
+            self.conn.execute(
+                """
+                INSERT INTO characters
+                (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style,
+                 diplomacy, martial, stewardship, intrigue, learning,
+                 birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
+                 status, status_reason, status_changed_turn, portrait_id, power_id, location, summary)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    character.name,
+                    office,
+                    office_type,
+                    character.faction,
+                    json.dumps(character.aliases, ensure_ascii=False),
+                    json.dumps(character.personal_skills, ensure_ascii=False),
+                    character.loyalty,
+                    character.ability,
+                    character.integrity,
+                    character.courage,
+                    character.style,
+                    character.diplomacy,
+                    character.martial,
+                    character.stewardship,
+                    character.intrigue,
+                    character.learning,
+                    character.birth_year,
+                    character.historical_death_year,
+                    character.historical_death_month,
+                    character.debut_year,
+                    character.debut_month,
+                    character.status,
+                    "",
+                    0,
+                    character.portrait_id,
+                    character.power_id,
+                    character.location,
+                    character.summary,
+                ),
+            )
+            new_character_names.append(character.name)
+        # character_offices：对新插入的人物补对应行；已有人物的任职履历不动。
+        # 兼容老档曾出现「characters 有行但 character_offices 空」的情形：表整体为空时全量补一次。
         if not self.table_has_rows("character_offices"):
             for row in self.conn.execute("SELECT name, office, office_type FROM characters").fetchall():
                 self.conn.execute(
@@ -104,6 +116,20 @@ class _SeedMixin:
                     VALUES (?, ?, ?, ?)
                     """,
                     (row["name"], row["office"], row["office_type"], "存档迁移"),
+                )
+        elif new_character_names:
+            for row in self.conn.execute(
+                "SELECT name, office, office_type FROM characters WHERE name IN ({})".format(
+                    ",".join("?" * len(new_character_names))
+                ),
+                new_character_names,
+            ).fetchall():
+                self.conn.execute(
+                    """
+                    INSERT INTO character_offices (character_name, office_title, office_type, source)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (row["name"], row["office"], row["office_type"], "剧本补入"),
                 )
 
         if not self.table_has_rows("factions"):
@@ -183,10 +209,10 @@ class _SeedMixin:
                 self.conn.execute(
                     """
                     INSERT INTO armies
-                    (id, name, station, theater, commander, controller, troop_type, manpower,
+                    (id, name, station, theater, commander, controller, troop_type, troop_composition, manpower,
                      maintenance_per_turn, supply, morale, training, equipment, arrears,
                      mobility, loyalty, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         army.id,
@@ -196,6 +222,7 @@ class _SeedMixin:
                         army.commander,
                         army.controller,
                         army.troop_type,
+                        json.dumps(army.troop_composition, ensure_ascii=False),
                         army.manpower,
                         army.maintenance_per_turn,
                         army.supply,

@@ -13,9 +13,9 @@
       "theater": "京畿",
       "commander": "京营诸将",
       "controller": "兵部",
-      "troop_type": "步卒、火器兵、骑兵",
+      "troop_type": "步卒、火器炮兵、骑兵",
       "manpower": 85000,
-      "maintenance_per_turn": 7,
+      "maintenance_per_turn": 8,
       "supply": 55,
       "morale": 42,
       "training": 38,
@@ -24,7 +24,12 @@
       "mobility": 35,
       "loyalty": 48,
       "status": "拱卫京师但空额、克扣和操练废弛严重。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "troop_composition": {
+        "步卒": 75000,
+        "火器炮兵": 5000,
+        "骑兵": 5000
+      }
     },
     {
       "id": "guanning",
@@ -33,9 +38,9 @@
       "theater": "辽东",
       "commander": "袁崇焕",
       "controller": "袁崇焕",
-      "troop_type": "边军、骑兵、火器兵、炮兵",
+      "troop_type": "边军、骑兵、火器炮兵",
       "manpower": 72000,
-      "maintenance_per_turn": 15,
+      "maintenance_per_turn": 10,
       "supply": 38,
       "morale": 52,
       "training": 68,
@@ -44,7 +49,12 @@
       "mobility": 48,
       "loyalty": 55,
       "status": "宁锦守线尚可，欠饷严重，主动大举出击风险极高。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "troop_composition": {
+        "边军": 42000,
+        "骑兵": 18000,
+        "火器炮兵": 12000
+      }
     },
     {
       "id": "shanhaiguan",
@@ -53,7 +63,7 @@
       "theater": "辽东门户",
       "commander": "山海关总兵",
       "controller": "兵部",
-      "troop_type": "关隘守军、炮兵、步卒",
+      "troop_type": "关隘守军、火器炮兵、步卒",
       "manpower": 28000,
       "maintenance_per_turn": 3,
       "supply": 56,
@@ -64,7 +74,12 @@
       "mobility": 28,
       "loyalty": 58,
       "status": "京师门户，守强攻弱，需与宁锦军饷联动。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "troop_composition": {
+        "关隘守军": 18000,
+        "火器炮兵": 4000,
+        "步卒": 6000
+      }
     },
     {
       "id": "xuan_da",
@@ -75,7 +90,7 @@
       "controller": "兵部",
       "troop_type": "边军、骑兵、步卒",
       "manpower": 65000,
-      "maintenance_per_turn": 10,
+      "maintenance_per_turn": 8,
       "supply": 42,
       "morale": 48,
       "training": 55,
@@ -84,7 +99,12 @@
       "mobility": 54,
       "loyalty": 50,
       "status": "边饷紧、旱灾重，防蒙古与后金绕袭压力并存。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "troop_composition": {
+        "边军": 40000,
+        "骑兵": 15000,
+        "步卒": 10000
+      }
     },
     {
       "id": "jizhen",
@@ -95,7 +115,7 @@
       "controller": "兵部",
       "troop_type": "边军、骑兵、步卒",
       "manpower": 52000,
-      "maintenance_per_turn": 8,
+      "maintenance_per_turn": 6,
       "supply": 46,
       "morale": 47,
       "training": 52,
@@ -104,7 +124,12 @@
       "mobility": 50,
       "loyalty": 49,
       "status": "京师屏障，欠饷和军纪问题会直接牵动京畿。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "troop_composition": {
+        "边军": 33000,
+        "骑兵": 11000,
+        "步卒": 8000
+      }
     },
     {
       "id": "denglai",
@@ -113,7 +138,7 @@
       "theater": "海防辽援",
       "commander": "登莱巡抚",
       "controller": "兵部",
-      "troop_type": "水师、火器兵、步卒",
+      "troop_type": "水师、火器炮兵、步卒",
       "manpower": 26000,
       "maintenance_per_turn": 3,
       "supply": 50,
@@ -124,7 +149,12 @@
       "mobility": 62,
       "loyalty": 46,
       "status": "可支援辽东和海运，但虚实难辨，兵变风险需防。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "troop_composition": {
+        "水师": 12000,
+        "火器炮兵": 5000,
+        "步卒": 9000
+      }
     },
     {
       "id": "dongjiang",
@@ -144,7 +174,12 @@
       "mobility": 72,
       "loyalty": 38,
       "status": "牵制后金有用，但自主性强、报功报饷虚实难辨。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "troop_composition": {
+        "水师": 10000,
+        "岛兵": 12000,
+        "游击兵": 8000
+      }
     },
     {
       "id": "shaanxi_army",
@@ -164,7 +199,12 @@
       "mobility": 50,
       "loyalty": 34,
       "status": "饥荒、裁驿和欠饷交叠，易与地方民变互相点燃。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "troop_composition": {
+        "边军": 22000,
+        "步卒": 14000,
+        "骑兵": 6000
+      }
     },
     {
       "id": "nanjing_garrison",
@@ -175,7 +215,7 @@
       "controller": "南京兵部",
       "troop_type": "步卒、操江水兵、卫所兵",
       "manpower": 46000,
-      "maintenance_per_turn": 4,
+      "maintenance_per_turn": 5,
       "supply": 65,
       "morale": 49,
       "training": 44,
@@ -184,7 +224,12 @@
       "mobility": 45,
       "loyalty": 52,
       "status": "江南财赋重地，军力可守不可远征，士绅牵制明显。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "troop_composition": {
+        "步卒": 26000,
+        "操江水兵": 12000,
+        "卫所兵": 8000
+      }
     },
     {
       "id": "fujian_navy",
@@ -193,9 +238,9 @@
       "theater": "东南海防",
       "commander": "福建巡抚与水师将领",
       "controller": "兵部",
-      "troop_type": "水师、炮船、海防兵",
+      "troop_type": "水师、炮船兵、海防兵",
       "manpower": 18000,
-      "maintenance_per_turn": 2,
+      "maintenance_per_turn": 3,
       "supply": 47,
       "morale": 50,
       "training": 52,
@@ -204,7 +249,12 @@
       "mobility": 70,
       "loyalty": 45,
       "status": "海防与海贸灰区纠缠，能巡海但难离本省太久。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "troop_composition": {
+        "水师": 12000,
+        "炮船兵": 3000,
+        "海防兵": 3000
+      }
     },
     {
       "id": "guangdong_navy",
@@ -213,7 +263,7 @@
       "theater": "南海海防",
       "commander": "广东巡抚与水师将领",
       "controller": "兵部",
-      "troop_type": "水师、炮船、海防兵",
+      "troop_type": "水师、炮船兵、海防兵",
       "manpower": 16000,
       "maintenance_per_turn": 2,
       "supply": 50,
@@ -224,7 +274,12 @@
       "mobility": 68,
       "loyalty": 47,
       "status": "可守海口与护商，远离本地会受地方掣肘。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "troop_composition": {
+        "水师": 10000,
+        "炮船兵": 3000,
+        "海防兵": 3000
+      }
     },
     {
       "id": "southwest_tusi",
@@ -244,7 +299,12 @@
       "mobility": 60,
       "loyalty": 32,
       "status": "山地作战有用，听调取决于土司关系和赏赐名分。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "troop_composition": {
+        "土兵": 12000,
+        "山地步卒": 8000,
+        "弓弩兵": 4000
+      }
     },
     {
       "id": "manchu_banners_main",
@@ -253,7 +313,7 @@
       "theater": "辽东外线",
       "commander": "皇太极、代善、莽古尔泰",
       "controller": "后金汗廷",
-      "troop_type": "八旗骑步、披甲、巴牙喇",
+      "troop_type": "八旗骑兵、披甲步兵、巴牙喇",
       "manpower": 62000,
       "maintenance_per_turn": 0,
       "supply": 58,
@@ -264,7 +324,12 @@
       "mobility": 82,
       "loyalty": 72,
       "status": "努尔哈赤旧部仍强，皇太极新立，诸贝勒共议牵制汗权。",
-      "owner_power": "houjin"
+      "owner_power": "houjin",
+      "troop_composition": {
+        "八旗骑兵": 32000,
+        "披甲步兵": 22000,
+        "巴牙喇": 8000
+      }
     },
     {
       "id": "han_liaoren_corps",
@@ -284,7 +349,13 @@
       "mobility": 42,
       "loyalty": 46,
       "status": "尚未成后世汉八旗规模，但铸炮、通译、招降明边价值渐增。",
-      "owner_power": "houjin"
+      "owner_power": "houjin",
+      "troop_composition": {
+        "降军": 9000,
+        "炮匠": 3000,
+        "步卒": 4000,
+        "通译文吏": 2000
+      }
     },
     {
       "id": "mongol_chahar_host",
@@ -304,7 +375,11 @@
       "mobility": 86,
       "loyalty": 38,
       "status": "诸部离心，仍有机动优势；若后金压迫过甚，可能西走或倒向一方。",
-      "owner_power": "mongol"
+      "owner_power": "mongol",
+      "troop_composition": {
+        "草原骑兵": 30000,
+        "部族兵": 6000
+      }
     },
     {
       "id": "korean_border_army",
@@ -324,7 +399,13 @@
       "mobility": 45,
       "loyalty": 55,
       "status": "丁卯之役后谨慎自保，明后金之间左右支应。",
-      "owner_power": "korea"
+      "owner_power": "korea",
+      "troop_composition": {
+        "边军": 12000,
+        "弓手": 7000,
+        "火器兵": 5000,
+        "水军": 4000
+      }
     },
     {
       "id": "bandit_wangjiayin",
@@ -333,7 +414,7 @@
       "theater": "陕北",
       "commander": "王嘉胤",
       "controller": "自立",
-      "troop_type": "饥民、逃卒、驿卒裹挟",
+      "troop_type": "饥民、逃卒、驿卒",
       "manpower": 3500,
       "maintenance_per_turn": 0,
       "supply": 22,
@@ -344,7 +425,12 @@
       "mobility": 66,
       "loyalty": 42,
       "status": "小股啸聚初成气候，若陕西赈抚失措，极易滚成大股流寇。",
-      "owner_power": "bandits"
+      "owner_power": "bandits",
+      "troop_composition": {
+        "饥民": 2200,
+        "逃卒": 900,
+        "驿卒": 400
+      }
     }
   ]
 }

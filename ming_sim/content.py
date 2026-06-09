@@ -185,10 +185,19 @@ def load_region_content() -> Dict[str, Region]:
 
 def load_army_content() -> Dict[str, Army]:
     data = require_dict(load_json_asset("armies.json"), "armies.json")
+    troop_cost = load_troop_cost()
     armies: Dict[str, Army] = {}
     for idx, raw in enumerate(require_list(data.get("armies"), "armies.json.armies"), 1):
         item = require_dict(raw, f"armies.json.armies[{idx}]")
         army_id = str_field(item, "id", f"armies.json.armies[{idx}]")
+        troop_composition = normalize_troop_composition(
+            item.get("troop_composition"),
+            fallback_troop_type=str(item.get("troop_type") or ""),
+            fallback_manpower=int(item.get("manpower") or 0),
+        )
+        troop_type = troop_type_from_composition(troop_composition) or str_field(item, "troop_type", f"armies.json.armies[{idx}]")
+        manpower = sum(troop_composition.values()) if troop_composition else int_field(item, "manpower", f"armies.json.armies[{idx}]")
+        owner_power = str_field(item, "owner_power", f"armies.json.armies[{idx}]")
         armies[army_id] = Army(
             id=army_id,
             name=str_field(item, "name", f"armies.json.armies[{idx}]"),
@@ -196,9 +205,12 @@ def load_army_content() -> Dict[str, Army]:
             theater=str_field(item, "theater", f"armies.json.armies[{idx}]"),
             commander=str_field(item, "commander", f"armies.json.armies[{idx}]"),
             controller=str_field(item, "controller", f"armies.json.armies[{idx}]"),
-            troop_type=str_field(item, "troop_type", f"armies.json.armies[{idx}]"),
-            manpower=int_field(item, "manpower", f"armies.json.armies[{idx}]"),
-            maintenance_per_turn=int_field(item, "maintenance_per_turn", f"armies.json.armies[{idx}]"),
+            troop_type=troop_type,
+            troop_composition=troop_composition,
+            manpower=manpower,
+            maintenance_per_turn=troop_maintenance_total(troop_composition, troop_cost)
+            if troop_composition and owner_power == "ming"
+            else int_field(item, "maintenance_per_turn", f"armies.json.armies[{idx}]"),
             supply=int_field(item, "supply", f"armies.json.armies[{idx}]"),
             morale=int_field(item, "morale", f"armies.json.armies[{idx}]"),
             training=int_field(item, "training", f"armies.json.armies[{idx}]"),
@@ -207,7 +219,7 @@ def load_army_content() -> Dict[str, Army]:
             mobility=int_field(item, "mobility", f"armies.json.armies[{idx}]"),
             loyalty=int_field(item, "loyalty", f"armies.json.armies[{idx}]"),
             status=str_field(item, "status", f"armies.json.armies[{idx}]"),
-            owner_power=str_field(item, "owner_power", f"armies.json.armies[{idx}]"),
+            owner_power=owner_power,
         )
     if not armies:
         raise SystemExit("armies.json 必须至少定义一支军队。")
@@ -526,6 +538,49 @@ def load_troop_cost() -> "Dict[str, object]":
     return {"version": version, "default_tier": default_tier, "tiers": tiers}
 
 
+def normalize_troop_composition(value: object, *, fallback_troop_type: str = "", fallback_manpower: int = 0) -> Dict[str, int]:
+    if isinstance(value, dict):
+        out: Dict[str, int] = {}
+        for key, raw_amount in value.items():
+            troop = str(key).strip()
+            try:
+                amount = int(raw_amount)
+            except (TypeError, ValueError):
+                amount = 0
+            if troop and amount > 0:
+                out[troop] = out.get(troop, 0) + amount
+        return out
+    text = str(fallback_troop_type or "").strip()
+    if text and fallback_manpower > 0:
+        return {text: int(fallback_manpower)}
+    return {}
+
+
+def troop_type_from_composition(composition: Dict[str, int]) -> str:
+    return "、".join(k for k, v in composition.items() if int(v) > 0)
+
+
+def troop_rate_for_type(troop_type: str, troop_cost: Dict[str, object]) -> float:
+    tiers = troop_cost.get("tiers") or []
+    text = str(troop_type or "")
+    for tier in tiers:
+        for kw in tier.get("keywords", []):
+            if kw and kw in text:
+                return float(tier["per_kilo"])
+    default_tier = troop_cost.get("default_tier")
+    for tier in tiers:
+        if tier.get("tier") == default_tier:
+            return float(tier["per_kilo"])
+    return 0.0
+
+
+def troop_maintenance_total(composition: Dict[str, int], troop_cost: Dict[str, object]) -> int:
+    total = 0.0
+    for troop_type, manpower in composition.items():
+        total += troop_rate_for_type(troop_type, troop_cost) * int(manpower) / 1000.0
+    return round(total)
+
+
 def _slug_weapon_id(name: str) -> str:
     """LLM 新出型号无英文 id 时，由名生成安全 id。ASCII 直接小写连字符，
     中文则退化成 `weapon_<hex>`（稳定可复现，同名同 id，供 arms 表主键去重）。"""
@@ -604,6 +659,7 @@ def load_weapons() -> "Dict[str, object]":
             "cost": int_field(item, "cost", path),
             "equip_per_unit": _float_field(item, "equip_per_unit", path),
             "requires_tech": str(item.get("requires_tech") or ""),
+            "opening_stock": max(0, int(item.get("opening_stock") or 0)),
         })
     return {"version": version, "default_tier": default_tier, "tiers": tiers, "weapons": weapons}
 
@@ -652,6 +708,10 @@ class GameContent:
     chapter_memory_prompt: str = ""
     minister_recap_prompt: str = ""
     ending_summary_prompt: str = ""
+    scenario_gen_characters_prompt: str = ""
+    scenario_gen_events_prompt: str = ""
+    scenario_gen_seed_events_prompt: str = ""
+    scenario_editor_prompt: str = ""
 
     fiscal_items: List[Dict[str, object]] = field(default_factory=list)
     troop_cost: Dict[str, object] = field(default_factory=dict)
@@ -713,29 +773,26 @@ class GameContent:
             chapter_memory_prompt=load_text_asset("prompts/chapter_memory.md"),
             minister_recap_prompt=load_text_asset("prompts/minister_recap.md"),
             ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),
+            scenario_gen_characters_prompt=load_text_asset("prompts/scenario_gen_characters.md"),
+            scenario_gen_events_prompt=load_text_asset("prompts/scenario_gen_events.md"),
+            scenario_gen_seed_events_prompt=load_text_asset("prompts/scenario_gen_seed_events.md"),
+            scenario_editor_prompt=load_text_asset("prompts/scenario_editor.md"),
         )
 
     def troop_cost_per_kilo(self, troop_type: str) -> float:
         """据 troop_type 自由组合串匹配兵种档，返回每千人月饷单价（万两）。
         tiers 按从贵到便宜排序，命中第一档即返回（即取军内最贵兵种）；都不命中走 default_tier。
         """
-        tiers = self.troop_cost.get("tiers") or []
-        text = str(troop_type or "")
-        for tier in tiers:
-            for kw in tier.get("keywords", []):
-                if kw and kw in text:
-                    return float(tier["per_kilo"])
-        default_tier = self.troop_cost.get("default_tier")
-        for tier in tiers:
-            if tier.get("tier") == default_tier:
-                return float(tier["per_kilo"])
-        return 0.0
+        return troop_rate_for_type(troop_type, self.troop_cost)
 
     def troop_maintenance_delta(self, troop_type: str, manpower_delta: int) -> int:
         """扩缩军兵力增量 → 军费增量（万两，四舍五入）。单价＝troop_cost_per_kilo，
         manpower 单位＝人，单价单位＝万两/千人，故 ÷1000。"""
         rate = self.troop_cost_per_kilo(troop_type)
         return round(rate * manpower_delta / 1000.0)
+
+    def troop_maintenance_total(self, composition: Dict[str, int]) -> int:
+        return troop_maintenance_total(composition, self.troop_cost)
 
     def weapon_meta(self, name_or_id: str) -> Dict[str, object]:
         """据武器 id 或中文名解析型号元数据。命中预设→返回其条目；

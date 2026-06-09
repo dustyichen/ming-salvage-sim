@@ -34,6 +34,7 @@ export type Army = {
   commander: string;
   controller: string;
   troop_type: string;
+  troop_composition?: Record<string, number>;
   manpower: number;
   maintenance_per_turn: number;
   supply: number;
@@ -543,6 +544,7 @@ export type MenuStatus = {
   saves: MenuSave[];
   campaigns?: MenuCampaign[];
   current_campaign?: string;
+  active_scenario?: ScenarioManifest | null;
   game_settings?: {
     hitl_min_decisions: number;
     court_chat_debate_rounds?: number;
@@ -571,6 +573,112 @@ export type MenuStatus = {
     has_advanced_api_key: boolean;
     advanced_thinking_level: string;
   };
+};
+
+// ---- 自定义剧本 ----
+
+export type ScenarioManifest = {
+  id: string;
+  name: string;
+  description: string;
+  created?: number;
+  updated?: number;
+  source?: "manual" | "generated";
+  files: { characters: boolean; events: boolean; seed_events: boolean };
+};
+
+export type ScenarioFaction = {
+  name: string;
+  satisfaction: number;
+  leverage: number;
+  agenda: string;
+};
+
+export type ScenarioCharacter = {
+  name: string;
+  office: string;
+  office_type: string;
+  faction: string;
+  loyalty: number;
+  ability: number;
+  integrity: number;
+  courage: number;
+  style: string;
+  power_id: string;
+  aliases?: string[];
+  personal_skills?: string[];
+  diplomacy?: number;
+  martial?: number;
+  stewardship?: number;
+  intrigue?: number;
+  learning?: number;
+  location?: string;
+  birth_year?: number;
+  historical_death_year?: number;
+  historical_death_month?: number;
+  debut_year?: number;
+  debut_month?: number;
+  status?: string;
+  summary?: string;
+  portrait_id?: string;
+  [key: string]: unknown;
+};
+
+export type ScenarioCharactersFile = {
+  factions: ScenarioFaction[];
+  characters: ScenarioCharacter[];
+};
+
+export type ScenarioEvent = {
+  id: string;
+  title: string;
+  kind: string;
+  summary: string;
+  urgency: number;
+  severity: number;
+  credibility: number;
+  interests: string[];
+  audiences: string[];
+  event_type: "situation" | "node" | "ending";
+  resolve_condition?: string;
+  fail_condition?: string;
+  trigger_year?: number;
+  trigger_month?: number;
+  is_historical?: boolean;
+  require?: unknown;
+  trigger_gate?: unknown;
+  auto_trigger?: boolean;
+  bar_value?: number;
+  bar_good_meaning?: string;
+  bar_bad_meaning?: string;
+  inertia?: number;
+  region_hint?: string;
+  tags?: string[];
+  [key: string]: unknown;
+};
+
+export type ScenarioFull = {
+  manifest: ScenarioManifest;
+  characters: ScenarioCharactersFile | null;
+  events: ScenarioEvent[] | null;
+  seed_events: ScenarioEvent[] | null;
+};
+
+export type ScenarioGenerateResult = {
+  status: Record<string, string>;
+  validation?: string | null;
+  characters?: ScenarioCharactersFile | null;
+  events?: ScenarioEvent[] | null;
+  seed_events?: ScenarioEvent[] | null;
+};
+
+export type ScenarioChange = { tool: string; result: string };
+
+export type ScenarioChatResult = {
+  reply: string;
+  changes: ScenarioChange[];
+  scenario: ScenarioFull;
+  validation?: string | null;
 };
 
 export type ExtractionData = {

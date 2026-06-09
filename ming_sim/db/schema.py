@@ -199,6 +199,7 @@ class _SchemaMixin:
                 commander TEXT NOT NULL,
                 controller TEXT NOT NULL,
                 troop_type TEXT NOT NULL,
+                troop_composition TEXT NOT NULL DEFAULT '{}',
                 manpower INTEGER NOT NULL,
                 maintenance_per_turn INTEGER NOT NULL,
                 supply INTEGER NOT NULL,
@@ -683,6 +684,7 @@ class _SchemaMixin:
         }.items():
             self.ensure_column("powers", column, definition)
         self.ensure_column("armies", "owner_power", "TEXT NOT NULL DEFAULT 'ming'")
+        self.ensure_column("armies", "troop_composition", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
         self.ensure_column("characters", "power_id", "TEXT NOT NULL DEFAULT 'ming'")
         self.ensure_column("characters", "location", "TEXT NOT NULL DEFAULT ''")

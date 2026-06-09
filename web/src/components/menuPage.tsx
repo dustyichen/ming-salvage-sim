@@ -2,6 +2,7 @@ import React from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { api, apiUrl, normalizeApiError } from "../api";
 import type { MenuCampaign, MenuStatus } from "../types";
+import { ScenarioManagerModal } from "./scenarioManager";
 
 type LauncherLogInfo = {
   data_dir: string;
@@ -28,6 +29,7 @@ export function MenuPage({
   const [showSaveList, setShowSaveList] = React.useState(false);
   const [showGameSettings, setShowGameSettings] = React.useState(false);
   const [showDebugTools, setShowDebugTools] = React.useState(false);
+  const [showScenarios, setShowScenarios] = React.useState(false);
 
   const guard = async (label: string, fn: () => Promise<void>) => {
     setBusy(label);
@@ -97,6 +99,9 @@ export function MenuPage({
           <button className="menu-btn" disabled={!!busy} onClick={() => setShowGameSettings(true)}>
             游戏设置
           </button>
+          <button className="menu-btn" disabled={!!busy} onClick={() => setShowScenarios(true)}>
+            自定义剧本
+          </button>
           <button className="menu-btn" disabled={!!busy} onClick={() => setShowDebugTools(true)}>
             调试
           </button>
@@ -108,6 +113,9 @@ export function MenuPage({
             当前接口：{status.llm.base_url} · {status.llm.model}
           </div>
         )}
+        <div className="menu-llm-info">
+          当前剧本：{status?.active_scenario?.name ?? "默认（崇祯元年）"}
+        </div>
       </div>
 
       {showApiForm && (
@@ -149,6 +157,15 @@ export function MenuPage({
 
       {showDebugTools && (
         <DebugToolsModal onClose={() => setShowDebugTools(false)} />
+      )}
+
+      {showScenarios && (
+        <ScenarioManagerModal
+          onClose={() => setShowScenarios(false)}
+          onChanged={async () => {
+            await onRefresh();
+          }}
+        />
       )}
     </div>
   );
