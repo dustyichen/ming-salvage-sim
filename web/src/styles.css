@@ -890,6 +890,16 @@ select:focus-visible {
   color: #a64036;
 }
 
+/* 各军军饷「实发」小标：受国库约束的预计实发，附在应发金额下方 */
+.budget-paid-estimate {
+  display: block;
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--muted);
+  text-align: right;
+  line-height: 1.05;
+}
+
 .budget-summary strong.income {
   color: #2f7651;
 }

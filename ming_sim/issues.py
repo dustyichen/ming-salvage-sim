@@ -1834,6 +1834,7 @@ def apply_score_extraction(
             ch.status = status
             if status in {"dismissed", "imprisoned", "exiled", "retired", "dead"}:
                 ch.office = ""
+                ch.office_type = ""
         applied_status_changes.append({
             "name": name, "status": status, "reason": reason,
             **({"location": new_location} if new_location else {}),

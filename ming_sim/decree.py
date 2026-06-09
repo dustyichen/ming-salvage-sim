@@ -318,6 +318,11 @@ def resolve_directives(
             on_thinking=lambda c: _emit("thinking", c),
             on_text=lambda c: _emit("text", c),
         )
+    except LLMUnavailable:
+        # 超时（chunk 间隔超 20s）/ 连通失败等 LLM 不可用：不静默兜底推进回合，
+        # 直接冒泡到 worker → SSE error，提示用户「异常了」，由用户自行读档重来。
+        # 此时回合未 next_period（preresolve 自动存档即结算前状态），读档干净回滚。
+        raise
     except Exception as exc:
         print(f"[WARN] 推演 agent 失败：{exc}；本{TURN_UNIT}用简化邸报兜底，跳过 LLM 结算。")
         narrative = (

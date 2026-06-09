@@ -88,12 +88,13 @@ class _CharactersMixin:
         valid = {"active", "offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
         if status not in valid:
             raise ValueError(f"character status 非法：{status}")
-        # 去职（下狱/革职/流放/致仕/死）即削职：清空 characters.office，
-        # 原职仍留在 character_offices 备档可追溯。复职（active/offstage）不动 office。
+        # 去职（下狱/革职/流放/致仕/死）即削职：清空 characters.office 与 office_type，
+        # 原职仍留在 character_offices 备档可追溯。复职（active/offstage）不动职。
+        # 归属看 power_id（仍是 ming），起复授官不受 office_type 清空影响。
         ousted = status in {"dismissed", "imprisoned", "exiled", "retired", "dead"}
         if ousted:
             self.conn.execute(
-                "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, office='' WHERE name=?",
+                "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, office='', office_type='' WHERE name=?",
                 (status, reason[:200], state.turn, name),
             )
         else:
@@ -159,13 +160,14 @@ class _CharactersMixin:
         """既有官员调任/升迁：改 characters.office（office_type 给空则不动），
         同步 character_offices 备档。状态不变（仍 active）。"""
         office = normalize_office(office)
-        current_type = (
-            self.conn.execute(
-                "SELECT office_type FROM characters WHERE name=? AND power_id='ming'", (name,)
-            ).fetchone() or {"office_type": ""}
-        )["office_type"]
-        if not current_type:
+        # 归属判据看 power_id，不看 office_type——去职者 office_type 已清空，
+        # 但仍是大明臣属（power_id='ming'），起复授官不应被误拒。
+        row = self.conn.execute(
+            "SELECT office_type FROM characters WHERE name=? AND power_id='ming'", (name,)
+        ).fetchone()
+        if row is None:
             raise ValueError(f"{name}不属大明朝廷，不能授予大明官职")
+        current_type = row["office_type"] or ""
         eff_type = infer_office_type_from_office(office, office_type or current_type)
         if office_type or eff_type != current_type:
             self.conn.execute(

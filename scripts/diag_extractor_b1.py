@@ -17,15 +17,15 @@ tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 sess = GameSession(tmp.name, llm, content=content, verify_llm=False)
 sess.begin_turn()
 st = sess.state
-sess.db.apply_arms_dispatch(st, "guanning", "非正规步兵", "火铳", 1200, "测试")
-sess.db.apply_arms_dispatch(st, "guanning", "非正规步兵", "三眼铳", 500, "测试")
+sess.db.apply_arms_dispatch(st, "guanning", "杂兵", "火铳", 1200, "测试")
+sess.db.apply_arms_dispatch(st, "guanning", "杂兵", "三眼铳", 500, "测试")
 
 before = json.loads(sess.db.conn.execute(
     "SELECT troop_composition FROM armies WHERE id='guanning'").fetchone()["troop_composition"])
 print("整编前:", before)
 
-cheat = ("关宁军以新拨发的1200杆火铳、500支三眼铳整编一部非正规步兵为火枪步兵"
-         "（线列步兵），按实际枪数共约1700人，余部仍为非正规步兵。")
+cheat = ("关宁军以新拨发的1200杆火铳、500支三眼铳整编一部杂兵为火枪兵"
+         "，按实际枪数共约1700人，余部仍为杂兵。")
 res = sess.resolve_turn(decree="", cheat_directive=cheat)
 print("awaiting:", res.awaiting)
 

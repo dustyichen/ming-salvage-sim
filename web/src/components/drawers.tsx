@@ -442,6 +442,7 @@ export function MinisterCardList({
 export function ArmyDrawer({
   armies,
   armsStock,
+  troopRates,
   open,
   selectedArmyId,
   onSelectArmy,
@@ -449,6 +450,7 @@ export function ArmyDrawer({
 }: {
   armies: Army[];
   armsStock?: ArmsStockItem[];
+  troopRates?: Record<string, number>;
   open: boolean;
   selectedArmyId: string;
   onSelectArmy: (id: string) => void;
@@ -466,17 +468,8 @@ export function ArmyDrawer({
     if (!parts.length) return army.troop_type || "—";
     return parts.map(([name, amount]) => `${name}${amount}`).join("、");
   };
-  const troopRate = (name: string) => {
-    const rates: Record<string, number> = {
-      非正规步兵: 0.08, 线列步兵: 0.12, 野战炮兵: 0.22, 散兵: 0.16,
-      火炮队: 0.2,
-      堑壕步兵: 0.24, 班组步兵: 0.32, 机械化步兵: 0.48,
-      骑兵: 0.16, 龙骑兵: 0.19, 骠骑兵: 0.2, 手枪骑兵: 0.23, 装甲骑兵: 0.42,
-      桨帆舰队: 0.18, 风帆战舰: 0.28, 铁甲舰: 0.45, 无畏舰: 0.7,
-      侦察机: 1.0, 战斗机: 1.35, 轰炸机: 1.6,
-    };
-    return rates[name] ?? 0.08;
-  };
+  // 兵种单价来自后端 troop_rates（源自 troop_cost.json，单一来源；不再前端硬编码）。
+  const troopRate = (name: string) => (troopRates && troopRates[name]) ?? 0.08;
   const troopMonthlyPay = (name: string, amount: number) => troopRate(name) * amount / 1000;
   const formatWan = (value: number) => {
     return value.toFixed(2);

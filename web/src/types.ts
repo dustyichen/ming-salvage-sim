@@ -406,6 +406,7 @@ export type GameState = {
   departments: Department[];
   technologies: Technology[];
   preset_trees?: PresetTrees;
+  troop_rates?: Record<string, number>;  // 兵种单价表，来自 troop_cost.json（前端不再硬编码）
   map_nodes: MapNode[];
   ministers: Minister[];
   archived_ministers?: Minister[];

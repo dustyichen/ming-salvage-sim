@@ -21,7 +21,7 @@ from ming_sim.content import GameContent
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.llm_config import agent_sampling_settings, for_role as _llm_for_role, is_minimax_base_url
 from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
-from ming_sim.llm_model import create_chat_model, extract_agent_text
+from ming_sim.llm_model import create_chat_model, extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import GameState, LLMConfig
 from ming_sim.token_stats import record_stream_metrics, tlog, use_agno_metrics
 
@@ -131,8 +131,14 @@ def run_agent_text(agent: Agent, prompt: str, tag: str) -> str:
     用 use_agno_metrics 关掉本次的 monkeypatch 原生记账，避免 prompt/completion 双计。"""
     tlog(f"[{tag}] 开始非流式推演（等待完整响应）")
     t0 = time.monotonic()
-    with use_agno_metrics():
-        output = agent.run(prompt)
+    try:
+        with use_agno_metrics():
+            output = agent.run(prompt)
+    except LLMUnavailable:
+        raise
+    except Exception as error:
+        # 超时（read 20s）/ 连接失败转成 LLMUnavailable，上层据此提示用户而非静默兜底。
+        raise llm_unavailable_from_error(error, tag) from error
     _dump_llm_messages(output, tag)
     text = extract_agent_text(output)
     model_id = getattr(getattr(agent, "model", None), "id", None) or "nonstream"
@@ -173,7 +179,22 @@ def run_agent_stream_text(
     reasoning_last_print = time.monotonic()
     reasoning_streamed_chars = 0
     tool_calls = 0
-    for event in stream:
+
+    def _events():
+        # 取下一个流式 event 时把 httpx ReadTimeout / openai APITimeoutError（chunk 间隔
+        # 超 20s 判卡死）等转成 LLMUnavailable，让上层 except LLMUnavailable 识别并提示用户。
+        it = iter(stream)
+        while True:
+            try:
+                yield next(it)
+            except StopIteration:
+                return
+            except LLMUnavailable:
+                raise
+            except Exception as error:
+                raise llm_unavailable_from_error(error, f"{tag} 流式推演") from error
+
+    for event in _events():
         ev_type = type(event).__name__
         # 工具调用事件：记日志 + 把「正在查 X」作为思考片段推给前端
         if ev_type == "ToolCallStartedEvent":

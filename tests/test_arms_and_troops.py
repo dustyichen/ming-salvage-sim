@@ -45,23 +45,23 @@ class ArmsAndTroopsTests(unittest.TestCase):
 
     def test_army_payload_has_composition_and_computed_pay(self):
         army = next(item for item in self.db.army_payload() if item["id"] == "jingying")
-        self.assertEqual(army["troop_composition"], {"非正规步兵": 75000, "火炮队": 5000, "骑兵": 5000})
+        self.assertEqual(army["troop_composition"], {"杂兵": 75000, "火炮队": 5000, "轻骑兵": 5000})
         self.assertEqual(army["manpower"], sum(army["troop_composition"].values()))
         self.assertEqual(army["maintenance_per_turn"], self.content.troop_maintenance_total(army["troop_composition"]))
 
     def test_army_held_arms_three_tier(self):
         # 军→兵种→装备：拨给某军某兵种，army_held_arms 返回 {军:{兵种:{武器:件数}}}。
-        # 京营开局已配（火炮队 虎蹲炮120，非正规步兵 火铳15000）——拨发在其上累加。
+        # 京营开局已配（火炮队 虎蹲炮120，杂兵 火铳15000）——拨发在其上累加。
         base = self.db.army_held_arms_all()
         self.assertEqual(base["京营"]["火炮队"]["虎蹲炮"], 120)
-        self.assertEqual(base["京营"]["非正规步兵"]["火铳"], 15000)
+        self.assertEqual(base["京营"]["杂兵"]["火铳"], 15000)
         res = self.db.apply_arms_dispatch(self.state, "jingying", "火炮队", "虎蹲炮", 40, "测试")
         self.assertTrue(res["ok"])
         self.assertEqual(res["troop_type"], "火炮队")
-        self.db.apply_arms_dispatch(self.state, "jingying", "非正规步兵", "火铳", 1200, "测试")
+        self.db.apply_arms_dispatch(self.state, "jingying", "杂兵", "火铳", 1200, "测试")
         held = self.db.army_held_arms_all()
         self.assertEqual(held["京营"]["火炮队"]["虎蹲炮"], 160)      # 120+40
-        self.assertEqual(held["京营"]["非正规步兵"]["火铳"], 16200)  # 15000+1200
+        self.assertEqual(held["京营"]["杂兵"]["火铳"], 16200)       # 15000+1200
         # 装备按兵种分开：火炮队没有火铳
         self.assertNotIn("火铳", held["京营"]["火炮队"])
 
@@ -72,10 +72,10 @@ class ArmsAndTroopsTests(unittest.TestCase):
         self.assertIn("侦察机", res["note"])
 
     def test_dispatch_empty_troop_falls_back_to_main(self):
-        # 空兵种 → 兜底到主力兵种（人数最大，jingying 的非正规步兵 75000）。
+        # 空兵种 → 兜底到主力兵种（人数最大，jingying 的杂兵 75000）。
         res = self.db.apply_arms_dispatch(self.state, "jingying", "", "火铳", 500, "测试")
         self.assertTrue(res["ok"])
-        self.assertEqual(res["troop_type"], "非正规步兵")
+        self.assertEqual(res["troop_type"], "杂兵")
 
 
 class TroopRateAndCanonTests(unittest.TestCase):
@@ -83,21 +83,29 @@ class TroopRateAndCanonTests(unittest.TestCase):
         self.content = GameContent.load()
         self.tc = self.content.troop_cost
 
-    def test_long_name_not_eaten_by_short(self):
-        # B1 bug：「骑兵」是「骠骑兵」的子串，骠骑兵单价必须取自己档而非被骑兵吃
-        self.assertEqual(troop_rate_for_type("骠骑兵", self.tc), 0.2)
+    def test_generic_word_goes_to_base_tier(self):
+        # 泛词「骑兵」归基础档轻骑兵 0.16；「步兵」归 default 杂兵 0.08（不被同级贵档吃）
         self.assertEqual(troop_rate_for_type("骑兵", self.tc), 0.16)
+        self.assertEqual(troop_rate_for_type("步兵", self.tc), 0.08)
 
-    def test_free_text_takes_most_expensive_hit(self):
-        # 自由串关键词命中多档时取最贵（红夷炮队→火炮队 0.2），不随 JSON 顺序漂移
-        self.assertEqual(troop_rate_for_type("红夷炮队", self.tc), 0.2)
+    def test_specific_name_precise(self):
+        # 具体兵种名精确归档，不串到同级别档
+        self.assertEqual(troop_rate_for_type("重骑兵", self.tc), 0.22)
+        self.assertEqual(troop_rate_for_type("家丁骑", self.tc), 0.28)
+        self.assertEqual(troop_rate_for_type("火枪兵", self.tc), 0.14)
 
     def test_canon_number_and_dirty_name(self):
-        # 番号/脏名归一到固定兵种闭集名
-        self.assertEqual(canon_troop_name("关宁铁骑", self.tc), "骑兵")
-        self.assertEqual(canon_troop_name("步卒", self.tc), "非正规步兵")
+        # 番号/脏名归一到固定兵种闭集名（明末写实树）
+        self.assertEqual(canon_troop_name("关宁铁骑", self.tc), "重骑兵")
+        self.assertEqual(canon_troop_name("步卒", self.tc), "杂兵")
         # 精确名原样保留
-        self.assertEqual(canon_troop_name("线列步兵", self.tc), "线列步兵")
+        self.assertEqual(canon_troop_name("火炮队", self.tc), "火炮队")
+
+    def test_old_name_aliases_migrate(self):
+        # 老档旧兵种名经 keywords 别名平滑映射到新名（不丢、不乱归 default）
+        self.assertEqual(canon_troop_name("非正规步兵", self.tc), "杂兵")
+        self.assertEqual(canon_troop_name("线列步兵", self.tc), "线列兵")
+        self.assertEqual(canon_troop_name("桨帆舰队", self.tc), "水师")
 
 
 class TechGateTests(unittest.TestCase):
@@ -117,7 +125,7 @@ class TechGateTests(unittest.TestCase):
 
     def test_preset_troop_gate(self):
         # 预设超前兵种未研成对应科技 → 锁；基础兵种放行；AI 新兵种放行
-        self.assertTrue(self.db.troop_unlocked("非正规步兵"))
+        self.assertTrue(self.db.troop_unlocked("杂兵"))
         self.assertFalse(self.db.troop_unlocked("机械化步兵"))
         self.assertTrue(self.db.troop_unlocked("电磁炮兵"))  # runtime/AI 自创，不在表里
         # 研成科技后解锁
@@ -142,20 +150,20 @@ class TechGateTests(unittest.TestCase):
 
     def test_recompose_locked_troop_folds_into_default(self):
         # 端到端：改编制塞入未解锁的「机械化步兵」（内燃机甲未研），
-        # 落库后 composition 不应含该兵种，兵力并入 default_tier「非正规步兵」。
+        # 落库后 composition 不应含该兵种，兵力并入 default_tier「杂兵」。
         event = Event(id="t", title="整编", kind="测试", summary="", urgency=0,
                       severity=0, credibility=100, interests=[], audiences=[])
         changes = self.db.apply_army_deltas(
             self.state, event, None, "测试",
-            {"guanning": {"troop_composition": {"机械化步兵": 20000, "骑兵": 10000},
+            {"guanning": {"troop_composition": {"机械化步兵": 20000, "轻骑兵": 10000},
                           "reason": "整编新军"}},
         )
         import json
         comp = json.loads(self.db.conn.execute(
             "SELECT troop_composition FROM armies WHERE id='guanning'").fetchone()["troop_composition"])
         self.assertNotIn("机械化步兵", comp)          # 未解锁，被门控剔除
-        self.assertEqual(comp.get("骑兵"), 10000)      # 已解锁，原样保留
-        self.assertEqual(comp.get("非正规步兵"), 20000)  # 锁定兵力并入 default
+        self.assertEqual(comp.get("轻骑兵"), 10000)    # 已解锁，原样保留
+        self.assertEqual(comp.get("杂兵"), 20000)      # 锁定兵力并入 default
         # 程序代为降级的事实透出到明细 note，玩家可见
         entry = next(c for c in changes if c.get("field") == "troop_composition")
         self.assertIn("机械化步兵", entry.get("note", ""))

@@ -79,7 +79,21 @@
     "trigger_year": 1629,
     "trigger_month": 11,
     "is_historical": true,
-    "precondition": "历史既定：崇祯二年十一月皇太极绕道蒙古叩喜峰口、龙井关——此乃后金主动来犯，是否发起不由明廷，玩家无法取消其入塞，只能决定结果。后金避宁锦坚城、择蓟镇边墙之弱处而入，故结果主要由蓟镇一线虚实决定，看盘面：蓟镇(jizhen) arrears/training/equipment/morale、宣大(xuan_da) 同字段、关宁军(guanning) 是否欠饷哗变且能否分兵入卫、京营(jingying) 战力、beizhili.military_pressure。结果按蓟镇宣大此前整备程度分三档：①【挡于边墙】蓟镇宣大欠饷已补、操练城防像样（arrears 低、training/equipment 中上、morale 不低），则建虏顿于喜峰口一线、攻关不下，劫掠数州后粮尽自退，京师至多戒严不破关；②【入塞被遏】只补强部分、或补强不久根基浅，则虏骑破口入塞、掠京畿数县，但勤王军（关宁入卫）合力可将其逐出、未抵京师城下；③【长驱直入】蓟镇空虚、关宁欠饷哗变无力入卫，则破龙井关、陷遵化、兵临德胜门，京畿大掠。蓟镇是关键变量，宁锦再强若蓟镇空虚仍挡不住绕袭；反之蓟镇宣大扎实补强即可显著减轻祸患，不必面面俱到。"
+    "precondition": "历史既定：崇祯二年十一月皇太极绕道蒙古叩喜峰口、龙井关——此乃后金主动来犯，是否发起不由明廷，玩家无法取消其入塞，只能决定结果。后金避宁锦坚城、择蓟镇边墙之弱处而入，故结果主要由蓟镇一线虚实决定，看盘面：蓟镇(jizhen) arrears/training/equipment/morale、宣大(xuan_da) 同字段、关宁军(guanning) 是否欠饷哗变且能否分兵入卫、京营(jingying) 战力、beizhili.military_pressure。结果按蓟镇宣大此前整备程度分三档：①【挡于边墙】蓟镇宣大欠饷已补、操练城防像样（arrears 低、training/equipment 中上、morale 不低），则建虏顿于喜峰口一线、攻关不下，劫掠数州后粮尽自退，京师至多戒严不破关；②【入塞被遏】只补强部分、或补强不久根基浅，则虏骑破口入塞、掠京畿数县，但勤王军（关宁入卫）合力可将其逐出、未抵京师城下；③【长驱直入】蓟镇空虚、关宁欠饷哗变无力入卫，则破龙井关、陷遵化、兵临德胜门，京畿大掠。蓟镇是关键变量，宁锦再强若蓟镇空虚仍挡不住绕袭；反之蓟镇宣大扎实补强即可显著减轻祸患，不必面面俱到。",
+    "require": {
+      "and": [
+        {
+          "key": "region.jianzhou.controlled_by",
+          "op": "==",
+          "val": "houjin"
+        },
+        {
+          "key": "power.houjin.military_strength",
+          "op": ">=",
+          "val": 20
+        }
+      ]
+    }
   },
   {
     "id": "yuan_xialing",
@@ -151,6 +165,16 @@
     "require": {
       "and": [
         {
+          "key": "region.jianzhou.controlled_by",
+          "op": "==",
+          "val": "houjin"
+        },
+        {
+          "key": "power.houjin.military_strength",
+          "op": ">=",
+          "val": 20
+        },
+        {
           "key": "char.毛文龙.status",
           "op": "==",
           "val": "dead"
@@ -190,9 +214,23 @@
     "is_historical": true,
     "precondition": "辽东请饷未补足 + 关宁筑城仓促时触发（筑城进度暂无结构化字段，require 只卡硬条件：关宁欠饷未补足）",
     "require": {
-      "key": "army.guanning.arrears",
-      "op": ">=",
-      "val": 30
+      "and": [
+        {
+          "key": "region.jianzhou.controlled_by",
+          "op": "==",
+          "val": "houjin"
+        },
+        {
+          "key": "power.houjin.military_strength",
+          "op": ">=",
+          "val": 20
+        },
+        {
+          "key": "army.guanning.arrears",
+          "op": ">=",
+          "val": 30
+        }
+      ]
     }
   },
   {
@@ -221,7 +259,21 @@
     "trigger_month": 4,
     "is_historical": true,
     "precondition": "历史既定：崇祯五年皇太极征察哈尔，林丹汗西走青海；蒙古右翼倒向后金；若己巳之变后明未补强蓟镇/宣大边墙，则后果更烈",
-    "event_type": "node"
+    "event_type": "node",
+    "require": {
+      "and": [
+        {
+          "key": "region.jianzhou.controlled_by",
+          "op": "==",
+          "val": "houjin"
+        },
+        {
+          "key": "power.houjin.military_strength",
+          "op": ">=",
+          "val": 20
+        }
+      ]
+    }
   },
   {
     "id": "huangtaiji_chengdi",
@@ -250,7 +302,21 @@
     "trigger_month": 4,
     "is_historical": true,
     "precondition": "历史既定：崇祯九年四月皇太极称帝改国号大清；林丹汗西走、朝鲜被迫归附为前奏；玩家若已联蒙或保朝鲜，宣示力度可减",
-    "event_type": "node"
+    "event_type": "node",
+    "require": {
+      "and": [
+        {
+          "key": "region.jianzhou.controlled_by",
+          "op": "==",
+          "val": "houjin"
+        },
+        {
+          "key": "power.houjin.military_strength",
+          "op": ">=",
+          "val": 20
+        }
+      ]
+    }
   },
   {
     "id": "wuyin_lubian",
@@ -281,7 +347,21 @@
     "trigger_month": 9,
     "is_historical": true,
     "precondition": "历史既定：崇祯十一年九月清军第四次入塞，卢象升十二月战死巨鹿；若林丹汗西迁后蓟镇边墙未补、督师与监军不和则后果更烈",
-    "event_type": "node"
+    "event_type": "node",
+    "require": {
+      "and": [
+        {
+          "key": "region.jianzhou.controlled_by",
+          "op": "==",
+          "val": "houjin"
+        },
+        {
+          "key": "power.houjin.military_strength",
+          "op": ">=",
+          "val": 20
+        }
+      ]
+    }
   },
   {
     "id": "zhangxianzhong_zaifan",
@@ -309,7 +389,21 @@
     "trigger_month": 5,
     "is_historical": true,
     "precondition": "历史既定：崇祯十二年五月张献忠于谷城再反；若熊文灿招抚未实削兵权、未拆其据点，则必反",
-    "event_type": "node"
+    "event_type": "node",
+    "require": {
+      "and": [
+        {
+          "key": "power.bandits.military_strength",
+          "op": ">=",
+          "val": 15
+        },
+        {
+          "key": "char.张献忠.status",
+          "op": "!=",
+          "val": "dead"
+        }
+      ]
+    }
   },
   {
     "id": "huabei_plague",
@@ -362,7 +456,21 @@
     "trigger_year": 1634,
     "trigger_month": 1,
     "is_historical": true,
-    "precondition": "陕西逃户/民变持续未解时触发"
+    "precondition": "陕西逃户/民变持续未解时触发",
+    "require": {
+      "and": [
+        {
+          "key": "power.bandits.military_strength",
+          "op": ">=",
+          "val": 15
+        },
+        {
+          "key": "char.李自成.status",
+          "op": "!=",
+          "val": "dead"
+        }
+      ]
+    }
   },
   {
     "id": "songshan_battle",
@@ -389,7 +497,21 @@
     "trigger_year": 1641,
     "trigger_month": 8,
     "is_historical": true,
-    "precondition": "国库/边防长期未补 + 玩家急于进取时触发"
+    "precondition": "国库/边防长期未补 + 玩家急于进取时触发",
+    "require": {
+      "and": [
+        {
+          "key": "region.jianzhou.controlled_by",
+          "op": "==",
+          "val": "houjin"
+        },
+        {
+          "key": "power.houjin.military_strength",
+          "op": ">=",
+          "val": 20
+        }
+      ]
+    }
   },
   {
     "id": "luoyang_fallen",
@@ -504,6 +626,20 @@
     "trigger_month": 3,
     "is_historical": true,
     "precondition": "李自成入河南/陕西未压制 + 京营 + 边镇崩坏；明朝主线终点",
-    "event_type": "ending"
+    "event_type": "ending",
+    "require": {
+      "and": [
+        {
+          "key": "power.bandits.military_strength",
+          "op": ">=",
+          "val": 15
+        },
+        {
+          "key": "char.李自成.status",
+          "op": "!=",
+          "val": "dead"
+        }
+      ]
+    }
   }
 ]

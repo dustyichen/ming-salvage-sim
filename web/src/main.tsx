@@ -1235,6 +1235,7 @@ function App() {
       <ArmyDrawer
         armies={state.armies}
         armsStock={state.arms_stock}
+        troopRates={state.troop_rates}
         open={armyDrawerOpen}
         selectedArmyId={selectedArmyId}
         onSelectArmy={setSelectedArmyId}

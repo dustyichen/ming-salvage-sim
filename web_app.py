@@ -51,7 +51,7 @@ from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX
 from ming_sim.context import character_context_with_db, match_minister_from_text
 from ming_sim.constants import TURN_UNIT, BUILDING_CATEGORIES
-from ming_sim.flows import calc_province_fiscal, compute_budget_lines
+from ming_sim.flows import ARMY_SALARY_PRIORITY, calc_province_fiscal, compute_budget_lines
 from ming_sim.simulation import build_simulator_payload
 from ming_sim.directives import (
     StructuredDirectiveError,
@@ -1206,6 +1206,36 @@ class WebGame:
             account["base_expense_total"] = base_expense_total
             account["base_net"] = base_income_total - base_expense_total
             account["modifier_pct"] = int(legacy_mods.get(str(account_name), 0) or 0)
+            # 各军军饷预估实发：固定收支只是「应发」预算，真账（flows.apply_fixed_period_flows）
+            # 受国库余额约束——逐军按 ARMY_SALARY_PRIORITY 发 min(应发, max(0,国库剩余))，国库见底
+            # 后续军队全欠。这里复刻同一约束，给军饷行标上「预计实发」，免得 HUD 把账面应发当实扣。
+            salary_item = next(
+                (it for it in account["expense"] if it["name"] == "各军军饷"), None
+            )
+            if salary_item is not None:
+                net_pct = int(legacy_mods.get(str(account_name), 0) or 0)
+                # 发饷时国库可用 = 余额 + 本月固定净收入（发饷在固定收支落账之后）
+                available = max(
+                    0,
+                    int(account["balance"]) + income_total - (expense_total - int(salary_item["amount"])),
+                )
+                # 口径与应发行（maintenance_per_turn>0，无 active 过滤）一致，
+                # 也与真账 flows.apply_fixed_period_flows 的逐军循环一致。
+                army_map = {
+                    str(r["id"]): abs(self.db.apply_legacy_pct(-int(r["maintenance_per_turn"]), net_pct))
+                    for r in self.db.conn.execute(
+                        "SELECT id, maintenance_per_turn FROM armies "
+                        "WHERE owner_power='ming' AND maintenance_per_turn>0"
+                    ).fetchall()
+                }
+                ordered_ids = [k for k in ARMY_SALARY_PRIORITY if k in army_map]
+                ordered_ids += [k for k in army_map if k not in ARMY_SALARY_PRIORITY]
+                paid_estimate = 0
+                for aid in ordered_ids:
+                    pay = min(army_map[aid], available)
+                    paid_estimate += pay
+                    available -= pay
+                salary_item["paid_estimate"] = int(paid_estimate)
         # 本月入账（上月末结算）：上月末 LLM 推演 + 固定财政 tick 落的 ledger
         # 时序上 state.turn 在结算末尾 +1 进入新月，所以"本月可见的入账"是 cur_turn - 1 的 ledger。
         # 语义对齐玩家直觉："上月末抄家/清丈的钱，算这个月的收入"。
@@ -1293,6 +1323,11 @@ class WebGame:
             "departments": self.db.department_payload(),
             "technologies": self.db.technology_payload(),
             "preset_trees": _preset_tree_payload(self),
+            # 兵种单价表 {兵种名: per_kilo}，前端兵种月饷据此算，消除前端硬编码表（单一来源 troop_cost.json）。
+            "troop_rates": {
+                str(t.get("tier") or ""): float(t.get("per_kilo") or 0.0)
+                for t in (self.content.troop_cost.get("tiers") or [])
+            },
             "map_nodes": self.map_nodes(regions),
             "ministers": [
                 self.public_character(c)
