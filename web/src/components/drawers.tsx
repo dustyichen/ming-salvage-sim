@@ -507,17 +507,11 @@ export function ArmyDrawer({
     };
     return upgrades[name] ?? "—";
   };
-  const issuedEquipmentText = (army: Army) => {
+  // 持械：该军实际持有的军械实物件数（升级须有对应实物装备，按持械量定升级人数）。
+  const armyHeldArmsText = (army: Army) => {
     return army.arms && army.arms.length > 0
-      ? `；兵部加配${army.arms.map((w) => `${w.name}×${w.qty}`).join("、")}`
-      : "";
-  };
-  const armyEquipmentSummary = (army: Army) => {
-    const entries = troopEntries(army);
-    const defaults = entries.length
-      ? entries.map(([name]) => `${name}:${defaultTroopEquipment(String(name))}`).join("；")
-      : defaultTroopEquipment(army.troop_type || "");
-    return `${defaults}${issuedEquipmentText(army)}；装备评分${army.equipment}`;
+      ? army.arms.map((w) => `${w.name}×${w.qty}`).join("、")
+      : "暂无入库军械";
   };
   const arrearsTone = (army: Army) => {
     const maint = army.maintenance_per_turn || 1;
@@ -573,11 +567,11 @@ export function ArmyDrawer({
                   <tr><th>兵种</th><td colSpan={3}>{selected.troop_type}</td></tr>
                   <tr><th>编制</th><td colSpan={3}>{troopCompositionText(selected)}</td></tr>
                   <tr><th>兵力</th><td>{selected.manpower}</td><th>月饷</th><td>{selected.maintenance_per_turn}万两（分项{formatWan(troopPayTotal(selected))}）</td></tr>
-                  <tr><th>军械</th><td>{selected.equipment}</td><th>补给</th><td>{selected.supply}</td></tr>
-                  <tr><th>士气</th><td>{selected.morale}</td><th>操练</th><td>{selected.training}</td></tr>
-                  <tr><th>机动</th><td>{selected.mobility}</td><th>忠诚</th><td>{selected.loyalty}</td></tr>
+                  <tr><th>补给</th><td>{selected.supply}</td><th>士气</th><td>{selected.morale}</td></tr>
+                  <tr><th>操练</th><td>{selected.training}</td><th>机动</th><td>{selected.mobility}</td></tr>
+                  <tr><th>忠诚</th><td colSpan={3}>{selected.loyalty}</td></tr>
                   <tr><th>欠饷</th><td colSpan={3}>{selected.arrears > 0 ? `${selected.arrears}万两（≈${(selected.arrears / (selected.maintenance_per_turn || 1)).toFixed(1)}月）` : "无欠饷"}</td></tr>
-                  <tr><th>持械</th><td colSpan={3}>{armyEquipmentSummary(selected)}</td></tr>
+                  <tr><th>持械</th><td colSpan={3}>{armyHeldArmsText(selected)}</td></tr>
                   <tr><th>状态</th><td colSpan={3}>{selected.status}</td></tr>
                 </tbody>
               </table>
@@ -596,7 +590,7 @@ export function ArmyDrawer({
                         <td>{Number(amount)}</td>
                         <td>{rate.toFixed(2)}万/千人</td>
                         <td>{formatWan(monthlyPay)}万两</td>
-                        <td>{defaultTroopEquipment(troopName)}；评分{selected.equipment}{issuedEquipmentText(selected)}</td>
+                        <td>{defaultTroopEquipment(troopName)}</td>
                         <td>{troopUpgradeText(troopName)}</td>
                       </tr>
                     );
