@@ -582,8 +582,8 @@ export function ApiSettingsModal({
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState(String(initial?.max_tokens || 8000));
   const [timeoutSeconds, setTimeoutSeconds] = React.useState(String(initial?.timeout_seconds || 180));
-  const [connectTimeoutSeconds, setConnectTimeoutSeconds] = React.useState(String(initial?.connect_timeout_seconds || 10));
-  const [readTimeoutSeconds, setReadTimeoutSeconds] = React.useState(String(initial?.read_timeout_seconds || 20));
+  const [connectTimeoutSeconds, setConnectTimeoutSeconds] = React.useState(String(initial?.connect_timeout_seconds || 60));
+  const [readTimeoutSeconds, setReadTimeoutSeconds] = React.useState(String(initial?.read_timeout_seconds || 120));
   const [thinkingLevel, setThinkingLevel] = React.useState(initial?.thinking_level || "");
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
@@ -601,8 +601,8 @@ export function ApiSettingsModal({
           api_key: apiKey.trim(),
           max_tokens: parseInt(maxTokens) || 8000,
           timeout_seconds: parseFloat(timeoutSeconds) || 180,
-          connect_timeout_seconds: parseFloat(connectTimeoutSeconds) || 10,
-          read_timeout_seconds: parseFloat(readTimeoutSeconds) || 20,
+          connect_timeout_seconds: parseFloat(connectTimeoutSeconds) || 60,
+          read_timeout_seconds: parseFloat(readTimeoutSeconds) || 120,
           thinking_level: thinkingLevel.trim(),
           advanced_model: advancedModel.trim(),
           advanced_base_url: advancedBaseUrl.trim(),
@@ -668,11 +668,11 @@ export function ApiSettingsModal({
         </label>
         <label>
           Connect Timeout（建连超时）
-          <input type="number" min={1} max={120} value={connectTimeoutSeconds} onChange={(e) => setConnectTimeoutSeconds(e.target.value)} placeholder="10" />
+          <input type="number" min={1} max={300} value={connectTimeoutSeconds} onChange={(e) => setConnectTimeoutSeconds(e.target.value)} placeholder="60" />
         </label>
         <label>
           Read Timeout（流式 chunk 间隔上限）
-          <input type="number" min={5} max={300} value={readTimeoutSeconds} onChange={(e) => setReadTimeoutSeconds(e.target.value)} placeholder="20" />
+          <input type="number" min={5} max={600} value={readTimeoutSeconds} onChange={(e) => setReadTimeoutSeconds(e.target.value)} placeholder="120" />
         </label>
         <label>
           API Key

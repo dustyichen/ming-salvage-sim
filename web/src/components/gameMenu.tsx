@@ -342,8 +342,8 @@ export function LLMConfigTab() {
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState("8000");
   const [timeoutSeconds, setTimeoutSeconds] = React.useState("180");
-  const [connectTimeoutSeconds, setConnectTimeoutSeconds] = React.useState("10");
-  const [readTimeoutSeconds, setReadTimeoutSeconds] = React.useState("20");
+  const [connectTimeoutSeconds, setConnectTimeoutSeconds] = React.useState("60");
+  const [readTimeoutSeconds, setReadTimeoutSeconds] = React.useState("120");
   const [thinkingLevel, setThinkingLevel] = React.useState("");
   const [show, setShow] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
@@ -361,8 +361,8 @@ export function LLMConfigTab() {
         setAdvancedThinkingLevel(data.advanced_thinking_level || "");
         setMaxTokens(String(data.max_tokens || 8000));
         setTimeoutSeconds(String(data.timeout_seconds || 180));
-        setConnectTimeoutSeconds(String(data.connect_timeout_seconds || 10));
-        setReadTimeoutSeconds(String(data.read_timeout_seconds || 20));
+        setConnectTimeoutSeconds(String(data.connect_timeout_seconds || 60));
+        setReadTimeoutSeconds(String(data.read_timeout_seconds || 120));
         setThinkingLevel(data.thinking_level || "");
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
@@ -381,8 +381,8 @@ export function LLMConfigTab() {
           api_key: apiKey,
           max_tokens: parseInt(maxTokens) || 8000,
           timeout_seconds: parseFloat(timeoutSeconds) || 180,
-          connect_timeout_seconds: parseFloat(connectTimeoutSeconds) || 10,
-          read_timeout_seconds: parseFloat(readTimeoutSeconds) || 20,
+          connect_timeout_seconds: parseFloat(connectTimeoutSeconds) || 60,
+          read_timeout_seconds: parseFloat(readTimeoutSeconds) || 120,
           thinking_level: thinkingLevel.trim(),
           advanced_model: advancedModel,
           advanced_base_url: advancedBaseUrl,
@@ -509,10 +509,10 @@ export function LLMConfigTab() {
           className="menu-input"
           type="number"
           min={1}
-          max={120}
+          max={300}
           value={connectTimeoutSeconds}
           onChange={(e) => setConnectTimeoutSeconds(e.target.value)}
-          placeholder="10"
+          placeholder="60"
         />
       </label>
       <label className="menu-field">
@@ -521,10 +521,10 @@ export function LLMConfigTab() {
           className="menu-input"
           type="number"
           min={5}
-          max={300}
+          max={600}
           value={readTimeoutSeconds}
           onChange={(e) => setReadTimeoutSeconds(e.target.value)}
-          placeholder="20"
+          placeholder="120"
         />
       </label>
       <label className="menu-field">

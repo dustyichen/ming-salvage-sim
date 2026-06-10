@@ -446,8 +446,8 @@ def _build_llm_config_from_runtime() -> LLMConfig:
     thinking_level = os.environ.get("OPENAI_THINKING_LEVEL", "")
     advanced_thinking_level = os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
     timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180)
-    connect_timeout_seconds = float(os.environ.get("OPENAI_CONNECT_TIMEOUT_SECONDS", "10") or 10)
-    read_timeout_seconds = float(os.environ.get("OPENAI_READ_TIMEOUT_SECONDS", "20") or 20)
+    connect_timeout_seconds = float(os.environ.get("OPENAI_CONNECT_TIMEOUT_SECONDS", "60") or 60)
+    read_timeout_seconds = float(os.environ.get("OPENAI_READ_TIMEOUT_SECONDS", "120") or 120)
     # 菜单写的 runtime_llm.json 优先于 env，让「在网页里改的配置」重启后仍生效。
     runtime = load_runtime_llm()
     base_url = runtime.get("base_url") or base_url
@@ -2672,8 +2672,8 @@ async def api_menu_status() -> Dict[str, Any]:
             "has_api_key": has_api_key,
             "max_tokens": int(runtime.get("max_tokens") or 8000),
             "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180),
-            "connect_timeout_seconds": float(runtime.get("connect_timeout_seconds") or os.environ.get("OPENAI_CONNECT_TIMEOUT_SECONDS", "10") or 10),
-            "read_timeout_seconds": float(runtime.get("read_timeout_seconds") or os.environ.get("OPENAI_READ_TIMEOUT_SECONDS", "20") or 20),
+            "connect_timeout_seconds": float(runtime.get("connect_timeout_seconds") or os.environ.get("OPENAI_CONNECT_TIMEOUT_SECONDS", "60") or 60),
+            "read_timeout_seconds": float(runtime.get("read_timeout_seconds") or os.environ.get("OPENAI_READ_TIMEOUT_SECONDS", "120") or 120),
             "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
             "advanced_model": runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
             "advanced_base_url": runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
@@ -2842,8 +2842,8 @@ class LlmSetupRequest(BaseModel):
     api_key: str
     max_tokens: int = 8000
     timeout_seconds: float = 180
-    connect_timeout_seconds: float = 10
-    read_timeout_seconds: float = 20
+    connect_timeout_seconds: float = 60
+    read_timeout_seconds: float = 120
     thinking_level: str = ""
     advanced_model: str = ""
     advanced_base_url: str = ""
@@ -2863,8 +2863,8 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     advanced_api_key = (request.advanced_api_key or "").strip()
     max_tokens = request.max_tokens if request.max_tokens > 0 else 8000
     timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else 180
-    connect_timeout_seconds = request.connect_timeout_seconds if request.connect_timeout_seconds > 0 else 10
-    read_timeout_seconds = request.read_timeout_seconds if request.read_timeout_seconds > 0 else 20
+    connect_timeout_seconds = request.connect_timeout_seconds if request.connect_timeout_seconds > 0 else 60
+    read_timeout_seconds = request.read_timeout_seconds if request.read_timeout_seconds > 0 else 120
     thinking_level = normalize_thinking_level(request.thinking_level)
     advanced_thinking_level = normalize_thinking_level(request.advanced_thinking_level)
     if not (base_url and model):
@@ -3981,8 +3981,8 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "has_api_key": bool(saved.get("api_key", "")),
             "max_tokens": int(saved.get("max_tokens") or 8000),
             "timeout_seconds": float(saved.get("timeout_seconds") or 180),
-            "connect_timeout_seconds": float(saved.get("connect_timeout_seconds") or 10),
-            "read_timeout_seconds": float(saved.get("read_timeout_seconds") or 20),
+            "connect_timeout_seconds": float(saved.get("connect_timeout_seconds") or 60),
+            "read_timeout_seconds": float(saved.get("read_timeout_seconds") or 120),
             "thinking_level": saved.get("thinking_level", ""),
             "advanced_model": saved.get("advanced_model", ""),
             "advanced_base_url": saved.get("advanced_base_url", ""),
